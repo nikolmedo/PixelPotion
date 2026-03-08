@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PixelPotion - Settings</title>
+    <style>
+        :root {
+            --bg:#0f1117;--surface:#1a1d27;--surface2:#242836;
+            --accent:#6c5ce7;--accent2:#a29bfe;--green:#00b894;
+            --red:#e17055;--yellow:#fdcb6e;--text:#dfe6e9;
+            --text-dim:#636e72;--border:#2d3436;--radius:12px;
+        }
+        *{margin:0;padding:0;box-sizing:border-box;}
+        body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;}
+        .header{background:linear-gradient(135deg,var(--accent),#e84393);padding:20px;text-align:center;}
+        .header h1{font-size:1.6em;font-weight:700;}
+        .header p{opacity:.85;font-size:.9em;margin-top:4px;}
+        .nav{display:flex;background:var(--surface);border-bottom:1px solid var(--border);overflow-x:auto;}
+        .nav a{flex:1;text-align:center;padding:14px 10px;color:var(--text-dim);text-decoration:none;font-size:.85em;font-weight:600;transition:all .2s;white-space:nowrap;}
+        .nav a.active{color:var(--accent2);border-bottom:2px solid var(--accent);}
+        .nav a:hover{color:var(--text);}
+        .container{max-width:600px;margin:0 auto;padding:16px;}
+        .flash{padding:12px 16px;border-radius:var(--radius);margin-bottom:12px;font-size:.9em;}
+        .flash.success{background:rgba(0,184,148,.15);border:1px solid var(--green);color:var(--green);}
+        .flash.error{background:rgba(225,112,85,.15);border:1px solid var(--red);color:var(--red);}
+        .flash.info{background:rgba(108,92,231,.15);border:1px solid var(--accent);color:var(--accent2);}
+        .flash.warning{background:rgba(253,203,110,.15);border:1px solid var(--yellow);color:var(--yellow);}
+        .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:16px;}
+        .card h2{font-size:1.05em;margin-bottom:16px;display:flex;align-items:center;gap:8px;}
+        .card h2 .icon{font-size:1.3em;}
+        .status-bar{display:flex;gap:12px;flex-wrap:wrap;}
+        .status-chip{display:flex;align-items:center;gap:6px;padding:8px 14px;background:var(--surface2);border-radius:20px;font-size:.82em;font-weight:500;}
+        .dot{width:8px;height:8px;border-radius:50%;display:inline-block;}
+        .dot.green{background:var(--green);box-shadow:0 0 6px var(--green);}
+        .dot.red{background:var(--red);box-shadow:0 0 6px var(--red);}
+        .form-group{margin-bottom:14px;}
+        .form-group label{display:block;font-size:.82em;font-weight:600;color:var(--text-dim);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px;}
+        .form-group input,.form-group select{width:100%;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.95em;transition:border .2s;}
+        .form-group input:focus,.form-group select:focus{outline:none;border-color:var(--accent);}
+        .form-group input::placeholder{color:var(--text-dim);}
+        .form-group .hint{font-size:.78em;color:var(--text-dim);margin-top:4px;}
+        .form-group .hint a{color:var(--accent2);}
+        .btn{display:inline-flex;align-items:center;gap:6px;padding:10px 20px;border:none;border-radius:8px;font-size:.9em;font-weight:600;cursor:pointer;transition:all .2s;}
+        .btn-primary{background:var(--accent);color:#fff;}
+        .btn-primary:hover{background:var(--accent2);}
+        .btn-success{background:var(--green);color:#fff;}
+        .btn-success:hover{opacity:.85;}
+        .btn-block{width:100%;justify-content:center;}
+        .btn:disabled{opacity:.5;cursor:not-allowed;}
+        .toggle-password{position:relative;}
+        .toggle-password button{position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:.85em;}
+
+        /* Capture section */
+        .capture-section{text-align:center;padding:10px 0;}
+        .capture-btn{width:80px;height:80px;border-radius:50%;background:linear-gradient(135deg,var(--accent),#e84393);border:4px solid var(--surface2);color:#fff;font-size:2em;cursor:pointer;transition:all .2s;display:inline-flex;align-items:center;justify-content:center;}
+        .capture-btn:hover{transform:scale(1.1);}
+        .capture-btn:disabled{opacity:.4;transform:none;cursor:not-allowed;}
+        .status-text{margin-top:10px;font-size:.88em;color:var(--text-dim);}
+        @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.5;}}
+        .processing{animation:pulse 1.5s infinite;}
+
+        /* Style selector pills */
+        .style-selector{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;justify-content:center;}
+        .style-pill{padding:8px 16px;border-radius:20px;border:2px solid var(--border);background:var(--surface2);color:var(--text-dim);font-size:.85em;font-weight:600;cursor:pointer;transition:all .2s;}
+        .style-pill:hover{border-color:var(--accent);color:var(--text);}
+        .style-pill.active{border-color:var(--accent);background:var(--accent);color:#fff;}
+
+        .pending-badge{background:var(--red);color:#fff;border-radius:10px;padding:2px 8px;font-size:.75em;font-weight:700;}
+
+        .wifi-list{max-height:150px;overflow-y:auto;margin-bottom:12px;}
+        .wifi-item{padding:8px 12px;cursor:pointer;border-radius:6px;font-size:.9em;transition:background .2s;}
+        .wifi-item:hover{background:var(--surface2);}
+
+        /* Toast notification */
+        .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 24px;font-size:.9em;z-index:999;display:none;box-shadow:0 4px 20px rgba(0,0,0,.5);}
+        .toast.show{display:block;animation:slideUp .3s ease-out;}
+        @keyframes slideUp{from{opacity:0;transform:translateX(-50%) translateY(20px);}to{opacity:1;transform:translateX(-50%) translateY(0);}}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🧪 PixelPotion</h1>
+        <p>AI Style Camera</p>
+    </div>
+
+    <div class="nav">
+        <a href="/" class="active">📷 Capture</a>
+        <a href="/styles">🎨 Styles</a>
+        <a href="/gallery">🖼️ Gallery
+            {% if pending_count > 0 %}<span class="pending-badge">{{ pending_count }}</span>{% endif %}
+        </a>
+    </div>
+
+    <div class="container">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}{% for category, message in messages %}
+        <div class="flash {{ category }}">{{ message }}</div>
+        {% endfor %}{% endif %}{% endwith %}
+
+        <!-- Status -->
+        <div class="card">
+            <h2><span class="icon">📊</span> Status</h2>
+            <div class="status-bar">
+                <div class="status-chip">
+                    <span class="dot {{ 'green' if wifi_connected else 'red' }}"></span>
+                    WiFi: {{ "Connected" if wifi_connected else "AP Mode" }}
+                </div>
+                <div class="status-chip">
+                    <span class="dot {{ 'green' if config.gemini_api_key else 'red' }}"></span>
+                    Gemini
+                </div>
+                <div class="status-chip">
+                    <span class="dot {{ 'green' if config.telegram_bot_token and config.telegram_chat_id else 'red' }}"></span>
+                    Telegram
+                </div>
+            </div>
+            <p class="status-text {{ 'processing' if status.processing else '' }}" id="statusText">
+                {{ status.last_action }}
+            </p>
+        </div>
+
+        <!-- Capture + Style Selector -->
+        <div class="card">
+            <h2><span class="icon">📷</span> Capture Photo</h2>
+
+            <!-- Style pills -->
+            {% if styles|length > 0 %}
+            <div class="form-group" style="margin-bottom:8px;">
+                <label>Select style</label>
+            </div>
+            <div class="style-selector" id="stylePills">
+                {% for style in styles %}
+                <div class="style-pill {{ 'active' if style.id == active_style_id else '' }}"
+                     data-id="{{ style.id }}" onclick="selectStyle('{{ style.id }}')">
+                    {{ style.name }}
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="status-text" style="margin-bottom:12px;">
+                No styles configured. <a href="/styles" style="color:var(--accent2);">Create one →</a>
+            </p>
+            {% endif %}
+
+            <div class="capture-section">
+                <button type="button" class="capture-btn" id="captureBtn" onclick="doCapture()">
+                    📸
+                </button>
+                <p class="status-text" id="captureHint">Press to capture or use the physical button</p>
+            </div>
+        </div>
+
+        <!-- WiFi -->
+        <div class="card">
+            <h2><span class="icon">📶</span> WiFi Settings</h2>
+            <button class="btn btn-primary" style="margin-bottom:12px;" onclick="scanWifi()">🔍 Scan networks</button>
+            <div class="wifi-list" id="wifiList" style="display:none;"></div>
+            <form method="post" action="/save_wifi">
+                <div class="form-group">
+                    <label>SSID</label>
+                    <input type="text" name="wifi_ssid" id="wifiSsid" value="{{ config.wifi_ssid }}" placeholder="MyWiFiNetwork">
+                </div>
+                <div class="form-group">
+                    <label>WiFi Password</label>
+                    <div class="toggle-password">
+                        <input type="password" name="wifi_password" id="wifiPass" value="{{ config.wifi_password }}" placeholder="••••••••">
+                        <button type="button" onclick="togglePass('wifiPass')">👁️</button>
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-success btn-block">📶 Connect to WiFi</button>
+            </form>
+        </div>
+
+        <!-- API Keys -->
+        <div class="card">
+            <h2><span class="icon">🔑</span> API Keys</h2>
+            <form method="post" action="/save_config">
+                <div class="form-group">
+                    <label>Google Gemini API Key</label>
+                    <input type="password" name="gemini_api_key" id="geminiKey" value="{{ config.gemini_api_key }}" placeholder="AIzaSy...">
+                    <p class="hint">Get yours at <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a></p>
+                </div>
+                <div class="form-group">
+                    <label>Telegram Bot Token</label>
+                    <input type="password" name="telegram_bot_token" id="teleToken" value="{{ config.telegram_bot_token }}" placeholder="123456789:ABCdef...">
+                    <p class="hint">Create one with <a href="https://t.me/BotFather" target="_blank">@BotFather</a></p>
+                </div>
+                <div class="form-group">
+                    <label>Telegram Chat ID</label>
+                    <input type="text" name="telegram_chat_id" value="{{ config.telegram_chat_id }}" placeholder="-1001234567890">
+                    <p class="hint">Get yours from <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a></p>
+                </div>
+                <button type="submit" class="btn btn-primary btn-block">💾 Save Configuration</button>
+            </form>
+        </div>
+
+        <div class="card" style="text-align:center;color:var(--text-dim);font-size:.82em;">
+            <p>PixelPotion v3.0 | GPIO Pin: {{ config.gpio_pin }}</p>
+            <p>Button between GPIO{{ config.gpio_pin }} and GND</p>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast" id="toast"></div>
+
+    <script>
+        let selectedStyle = '{{ active_style_id }}';
+        let isProcessing = {{ 'true' if status.processing else 'false' }};
+
+        function selectStyle(id) {
+            selectedStyle = id;
+            document.querySelectorAll('.style-pill').forEach(p => {
+                p.classList.toggle('active', p.dataset.id === id);
+            });
+            // Persist for GPIO button
+            fetch('/set_active_style', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({style_id: id})
+            });
+        }
+
+        function doCapture() {
+            if (isProcessing) return;
+            const btn = document.getElementById('captureBtn');
+            btn.disabled = true;
+            isProcessing = true;
+            showToast('📸 Capturing...');
+
+            const formData = new FormData();
+            formData.append('style_id', selectedStyle);
+
+            fetch('/capture', { method: 'POST', body: formData })
+                .then(r => r.json())
+                .then(data => {
+                    if (!data.ok) {
+                        showToast('⚠️ ' + data.error);
+                        btn.disabled = false;
+                        isProcessing = false;
+                    }
+                })
+                .catch(() => {
+                    showToast('❌ Connection error');
+                    btn.disabled = false;
+                    isProcessing = false;
+                });
+        }
+
+        function showToast(msg) {
+            const t = document.getElementById('toast');
+            t.textContent = msg;
+            t.classList.add('show');
+            setTimeout(() => t.classList.remove('show'), 3000);
+        }
+
+        function togglePass(id) {
+            const inp = document.getElementById(id);
+            inp.type = inp.type === 'password' ? 'text' : 'password';
+        }
+
+        function scanWifi() {
+            const list = document.getElementById('wifiList');
+            list.style.display = 'block';
+            list.innerHTML = '<div class="wifi-item" style="color:var(--text-dim)">Scanning...</div>';
+            fetch('/scan_wifi').then(r => r.json()).then(networks => {
+                if (!networks.length) {
+                    list.innerHTML = '<div class="wifi-item" style="color:var(--text-dim)">No networks found</div>';
+                    return;
+                }
+                list.innerHTML = networks.map(n =>
+                    `<div class="wifi-item" onclick="document.getElementById('wifiSsid').value='${n}'">${n}</div>`
+                ).join('');
+            }).catch(() => {
+                list.innerHTML = '<div class="wifi-item" style="color:var(--red)">Scan failed</div>';
+            });
+        }
+
+        // Poll status — re-enable button when processing finishes
+        setInterval(() => {
+            fetch('/status_api').then(r => r.json()).then(data => {
+                const el = document.getElementById('statusText');
+                el.textContent = data.last_action;
+
+                const btn = document.getElementById('captureBtn');
+                if (data.processing) {
+                    el.classList.add('processing');
+                    btn.disabled = true;
+                    isProcessing = true;
+                } else {
+                    el.classList.remove('processing');
+                    btn.disabled = false;
+                    isProcessing = false;
+                }
+            });
+        }, 2000);
+    </script>
+</body>
+</html>

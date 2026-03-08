@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PixelPotion - Gallery</title>
+    <style>
+        :root {
+            --bg:#0f1117;--surface:#1a1d27;--surface2:#242836;
+            --accent:#6c5ce7;--accent2:#a29bfe;--green:#00b894;
+            --red:#e17055;--yellow:#fdcb6e;--text:#dfe6e9;
+            --text-dim:#636e72;--border:#2d3436;--radius:12px;
+        }
+        *{margin:0;padding:0;box-sizing:border-box;}
+        body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;}
+        .header{background:linear-gradient(135deg,var(--accent),#e84393);padding:20px;text-align:center;}
+        .header h1{font-size:1.6em;}
+        .header p{opacity:.85;font-size:.9em;margin-top:4px;}
+        .nav{display:flex;background:var(--surface);border-bottom:1px solid var(--border);}
+        .nav a{flex:1;text-align:center;padding:14px 10px;color:var(--text-dim);text-decoration:none;font-size:.85em;font-weight:600;transition:all .2s;white-space:nowrap;}
+        .nav a.active{color:var(--accent2);border-bottom:2px solid var(--accent);}
+        .nav a:hover{color:var(--text);}
+        .container{max-width:600px;margin:0 auto;padding:16px;}
+        .flash{padding:12px 16px;border-radius:var(--radius);margin-bottom:12px;font-size:.9em;}
+        .flash.success{background:rgba(0,184,148,.15);border:1px solid var(--green);color:var(--green);}
+        .flash.error{background:rgba(225,112,85,.15);border:1px solid var(--red);color:var(--red);}
+        .flash.info{background:rgba(108,92,231,.15);border:1px solid var(--accent);color:var(--accent2);}
+        .flash.warning{background:rgba(253,203,110,.15);border:1px solid var(--yellow);color:var(--yellow);}
+        .btn{display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border:none;border-radius:8px;font-size:.85em;font-weight:600;cursor:pointer;transition:all .2s;}
+        .btn-primary{background:var(--accent);color:#fff;}
+        .btn-success{background:var(--green);color:#fff;}
+        .btn-danger{background:var(--red);color:#fff;}
+        .btn-outline{background:transparent;color:var(--text-dim);border:1px solid var(--border);}
+        .btn-outline:hover{color:var(--text);border-color:var(--text-dim);}
+        .btn:disabled{opacity:.5;cursor:not-allowed;}
+        .pending-badge{background:var(--red);color:#fff;border-radius:10px;padding:2px 8px;font-size:.75em;font-weight:700;}
+        .form-group{margin-bottom:14px;}
+        .form-group label{display:block;font-size:.82em;font-weight:600;color:var(--text-dim);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px;}
+        .form-group select{width:100%;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.95em;}
+        .form-group select:focus{outline:none;border-color:var(--accent);}
+
+        .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px;}
+        .toolbar{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center;}
+        .empty-state{text-align:center;padding:60px 20px;color:var(--text-dim);}
+        .empty-state .icon{font-size:3em;margin-bottom:12px;}
+        .photo-grid{display:grid;grid-template-columns:1fr;gap:12px;}
+        .photo-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;transition:border .2s;}
+        .photo-card.selected{border-color:var(--accent);}
+        .photo-card .photo-img{width:100%;aspect-ratio:4/3;object-fit:cover;display:block;cursor:pointer;}
+        .photo-card .photo-info{padding:12px;display:flex;align-items:center;justify-content:space-between;}
+        .photo-card .photo-meta{font-size:.82em;color:var(--text-dim);}
+        .photo-card .photo-meta .name{color:var(--text);font-weight:500;font-size:.9em;display:block;margin-bottom:2px;}
+        .photo-actions{display:flex;gap:6px;}
+        .checkbox-label{display:flex;align-items:center;gap:8px;cursor:pointer;}
+        .checkbox-label input[type="checkbox"]{width:18px;height:18px;accent-color:var(--accent);}
+        .wifi-warning{background:rgba(253,203,110,.1);border:1px solid var(--yellow);border-radius:var(--radius);padding:14px;margin-bottom:16px;display:flex;align-items:center;gap:10px;font-size:.88em;color:var(--yellow);}
+        .wifi-warning a{color:var(--accent2);}
+        .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:100;align-items:center;justify-content:center;}
+        .modal-overlay.active{display:flex;}
+        .modal-overlay img{max-width:95vw;max-height:90vh;border-radius:8px;}
+        .modal-close{position:fixed;top:16px;right:16px;background:var(--surface);color:#fff;border:none;border-radius:50%;width:40px;height:40px;font-size:1.3em;cursor:pointer;z-index:101;}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🧪 PixelPotion</h1>
+        <p>Pending Photos Gallery</p>
+    </div>
+
+    <div class="nav">
+        <a href="/">📷 Capture</a>
+        <a href="/styles">🎨 Styles</a>
+        <a href="/gallery" class="active">🖼️ Gallery ({{ photos|length }})</a>
+    </div>
+
+    <div class="container">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}{% for category, message in messages %}
+        <div class="flash {{ category }}">{{ message }}</div>
+        {% endfor %}{% endif %}{% endwith %}
+
+        {% if not wifi_connected %}
+        <div class="wifi-warning">
+            ⚠️ No WiFi. You can preview and delete photos, but not process them.
+            <a href="/">Configure WiFi →</a>
+        </div>
+        {% endif %}
+
+        {% if photos|length == 0 %}
+        <div class="empty-state">
+            <div class="icon">📭</div>
+            <p>No pending photos</p>
+            <p style="font-size:.85em;margin-top:8px;">Photos captured without WiFi will appear here</p>
+        </div>
+        {% else %}
+
+        <!-- Style selector for processing -->
+        {% if wifi_connected and styles|length > 0 %}
+        <div class="card">
+            <div class="form-group" style="margin-bottom:0;">
+                <label>Style to apply</label>
+                <select id="galleryStyle">
+                    {% for style in styles %}
+                    <option value="{{ style.id }}" {{ 'selected' if style.id == active_style_id else '' }}>
+                        {{ style.name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        {% endif %}
+
+        <form method="post" action="/delete_selected" id="bulkForm">
+            <div class="toolbar">
+                <button type="button" class="btn btn-outline" onclick="toggleSelectAll()">☑️ All</button>
+                <button type="submit" class="btn btn-danger" onclick="return confirm('Delete selected photos?')">🗑️ Delete</button>
+                {% if wifi_connected %}
+                <button type="button" class="btn btn-success" onclick="processAll()">🎨 Process all</button>
+                {% endif %}
+            </div>
+
+            <div class="photo-grid">
+                {% for photo in photos %}
+                <div class="photo-card" id="card-{{ loop.index }}">
+                    <img class="photo-img" src="/pending_photo/{{ photo.name }}" alt="{{ photo.name }}"
+                         loading="lazy" onclick="openModal('/pending_photo/{{ photo.name }}')">
+                    <div class="photo-info">
+                        <div style="display:flex;align-items:center;gap:10px;">
+                            <label class="checkbox-label">
+                                <input type="checkbox" name="selected_photos" value="{{ photo.name }}"
+                                       onchange="toggleCard('card-{{ loop.index }}',this.checked)">
+                            </label>
+                            <div class="photo-meta">
+                                <span class="name">{{ photo.name }}</span>
+                                {{ photo.date }} · {{ photo.size_kb }} KB
+                            </div>
+                        </div>
+                        <div class="photo-actions">
+                            {% if wifi_connected %}
+                            <button type="button" class="btn btn-success" style="padding:6px 10px;font-size:.8em;"
+                                    onclick="processOne('{{ photo.name }}')">🎨</button>
+                            {% endif %}
+                            <form method="post" action="/delete_photo" style="display:inline;">
+                                <input type="hidden" name="filename" value="{{ photo.name }}">
+                                <button type="submit" class="btn btn-danger" style="padding:6px 10px;font-size:.8em;"
+                                        onclick="return confirm('Delete this photo?')">🗑️</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </form>
+        {% endif %}
+    </div>
+
+    <div class="modal-overlay" id="modal" onclick="closeModal()">
+        <button class="modal-close" onclick="closeModal()">✕</button>
+        <img id="modalImg" src="" alt="Preview">
+    </div>
+
+    <script>
+        function getSelectedStyle() {
+            const sel = document.getElementById('galleryStyle');
+            return sel ? sel.value : '';
+        }
+
+        function processOne(filename) {
+            const form = document.createElement('form');
+            form.method = 'post';
+            form.action = '/process_photo';
+
+            const fInput = document.createElement('input');
+            fInput.type = 'hidden'; fInput.name = 'filename'; fInput.value = filename;
+            form.appendChild(fInput);
+
+            const sInput = document.createElement('input');
+            sInput.type = 'hidden'; sInput.name = 'style_id'; sInput.value = getSelectedStyle();
+            form.appendChild(sInput);
+
+            document.body.appendChild(form);
+            form.submit();
+        }
+
+        function processAll() {
+            if (!confirm('Process all photos with the selected style?')) return;
+            const form = document.createElement('form');
+            form.method = 'post';
+            form.action = '/process_all';
+
+            const sInput = document.createElement('input');
+            sInput.type = 'hidden'; sInput.name = 'style_id'; sInput.value = getSelectedStyle();
+            form.appendChild(sInput);
+
+            document.body.appendChild(form);
+            form.submit();
+        }
+
+        function openModal(src) {
+            document.getElementById('modalImg').src = src;
+            document.getElementById('modal').classList.add('active');
+        }
+        function closeModal() {
+            document.getElementById('modal').classList.remove('active');
+        }
+        function toggleCard(id, selected) {
+            document.getElementById(id).classList.toggle('selected', selected);
+        }
+        function toggleSelectAll() {
+            const boxes = document.querySelectorAll('input[name="selected_photos"]');
+            const allChecked = Array.from(boxes).every(b => b.checked);
+            boxes.forEach((b, i) => {
+                b.checked = !allChecked;
+                toggleCard(`card-${i+1}`, !allChecked);
+            });
+        }
+        document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+    </script>
+</body>
+</html>

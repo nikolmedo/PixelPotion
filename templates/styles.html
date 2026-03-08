@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PixelPotion - Styles</title>
+    <style>
+        :root {
+            --bg:#0f1117;--surface:#1a1d27;--surface2:#242836;
+            --accent:#6c5ce7;--accent2:#a29bfe;--green:#00b894;
+            --red:#e17055;--yellow:#fdcb6e;--text:#dfe6e9;
+            --text-dim:#636e72;--border:#2d3436;--radius:12px;
+        }
+        *{margin:0;padding:0;box-sizing:border-box;}
+        body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;}
+        .header{background:linear-gradient(135deg,var(--accent),#e84393);padding:20px;text-align:center;}
+        .header h1{font-size:1.6em;font-weight:700;}
+        .header p{opacity:.85;font-size:.9em;margin-top:4px;}
+        .nav{display:flex;background:var(--surface);border-bottom:1px solid var(--border);overflow-x:auto;}
+        .nav a{flex:1;text-align:center;padding:14px 10px;color:var(--text-dim);text-decoration:none;font-size:.85em;font-weight:600;transition:all .2s;white-space:nowrap;}
+        .nav a.active{color:var(--accent2);border-bottom:2px solid var(--accent);}
+        .nav a:hover{color:var(--text);}
+        .container{max-width:600px;margin:0 auto;padding:16px;}
+        .flash{padding:12px 16px;border-radius:var(--radius);margin-bottom:12px;font-size:.9em;}
+        .flash.success{background:rgba(0,184,148,.15);border:1px solid var(--green);color:var(--green);}
+        .flash.error{background:rgba(225,112,85,.15);border:1px solid var(--red);color:var(--red);}
+        .flash.info{background:rgba(108,92,231,.15);border:1px solid var(--accent);color:var(--accent2);}
+        .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:16px;}
+        .card h2{font-size:1.05em;margin-bottom:16px;display:flex;align-items:center;gap:8px;}
+        .card h2 .icon{font-size:1.3em;}
+        .form-group{margin-bottom:14px;}
+        .form-group label{display:block;font-size:.82em;font-weight:600;color:var(--text-dim);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px;}
+        .form-group input,.form-group textarea{width:100%;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.95em;transition:border .2s;font-family:inherit;}
+        .form-group input:focus,.form-group textarea:focus{outline:none;border-color:var(--accent);}
+        .form-group input::placeholder,.form-group textarea::placeholder{color:var(--text-dim);}
+        .form-group textarea{min-height:120px;resize:vertical;line-height:1.5;}
+        .form-group .hint{font-size:.78em;color:var(--text-dim);margin-top:4px;}
+        .btn{display:inline-flex;align-items:center;gap:6px;padding:10px 20px;border:none;border-radius:8px;font-size:.9em;font-weight:600;cursor:pointer;transition:all .2s;}
+        .btn-primary{background:var(--accent);color:#fff;}
+        .btn-primary:hover{background:var(--accent2);}
+        .btn-success{background:var(--green);color:#fff;}
+        .btn-danger{background:var(--red);color:#fff;}
+        .btn-outline{background:transparent;color:var(--text-dim);border:1px solid var(--border);}
+        .btn-outline:hover{color:var(--text);border-color:var(--text-dim);}
+        .btn-sm{padding:6px 12px;font-size:.82em;}
+        .btn-block{width:100%;justify-content:center;}
+        .btn:disabled{opacity:.5;cursor:not-allowed;}
+        .pending-badge{background:var(--red);color:#fff;border-radius:10px;padding:2px 8px;font-size:.75em;font-weight:700;}
+
+        /* Style cards */
+        .style-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:12px;overflow:hidden;transition:border .2s;}
+        .style-card.is-active{border-color:var(--accent);box-shadow:0 0 12px rgba(108,92,231,.2);}
+        .style-header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;cursor:pointer;}
+        .style-header .name{font-weight:600;font-size:.95em;display:flex;align-items:center;gap:8px;}
+        .style-header .badge{font-size:.72em;padding:2px 8px;border-radius:10px;background:var(--accent);color:#fff;}
+        .style-header .toggle-icon{font-size:1.2em;transition:transform .2s;color:var(--text-dim);}
+        .style-header .toggle-icon.open{transform:rotate(180deg);}
+
+        .style-body{display:none;padding:0 16px 16px;}
+        .style-body.open{display:block;}
+
+        .style-actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;}
+
+        .prompt-preview{background:var(--surface2);border-radius:8px;padding:12px;font-size:.82em;color:var(--text-dim);max-height:120px;overflow-y:auto;white-space:pre-wrap;line-height:1.5;margin-top:8px;}
+
+        .empty-state{text-align:center;padding:40px 20px;color:var(--text-dim);}
+        .empty-state .icon{font-size:3em;margin-bottom:12px;}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🧪 PixelPotion</h1>
+        <p>Style Management</p>
+    </div>
+
+    <div class="nav">
+        <a href="/">📷 Capture</a>
+        <a href="/styles" class="active">🎨 Styles</a>
+        <a href="/gallery">🖼️ Gallery
+            {% if pending_count > 0 %}<span class="pending-badge">{{ pending_count }}</span>{% endif %}
+        </a>
+    </div>
+
+    <div class="container">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}{% for category, message in messages %}
+        <div class="flash {{ category }}">{{ message }}</div>
+        {% endfor %}{% endif %}{% endwith %}
+
+        <!-- Add new style -->
+        <div class="card">
+            <h2><span class="icon">➕</span> Create New Style</h2>
+            <form method="post" action="/add_style">
+                <div class="form-group">
+                    <label>Style name</label>
+                    <input type="text" name="style_name" placeholder="e.g. Comic Book, Oil Painting, Cyberpunk..." required>
+                </div>
+                <div class="form-group">
+                    <label>Prompt for Gemini</label>
+                    <textarea name="style_prompt" placeholder="TASK: Transform this photograph into...&#10;&#10;Describe the style you want to apply. Be specific about:&#10;- Visual style&#10;- How to handle people (keep likeness)&#10;- How to handle the background&#10;- Composition rules" required></textarea>
+                    <p class="hint">
+                        Tip: Always start with "TASK: Transform this photograph into..." and
+                        end with "OUTPUT: Generate the transformed image now." for best results.
+                    </p>
+                </div>
+                <button type="submit" class="btn btn-success btn-block">➕ Create Style</button>
+            </form>
+        </div>
+
+        <!-- Existing styles -->
+        <div class="card">
+            <h2><span class="icon">🎨</span> Available Styles ({{ styles|length }})</h2>
+
+            {% if styles|length == 0 %}
+            <div class="empty-state">
+                <div class="icon">🎨</div>
+                <p>No styles configured</p>
+                <p style="font-size:.85em;margin-top:8px;">Create your first style above</p>
+            </div>
+            {% endif %}
+
+            {% for style in styles %}
+            <div class="style-card {{ 'is-active' if style.id == active_style_id else '' }}" id="card-{{ style.id }}">
+                <div class="style-header" onclick="toggleStyle('{{ style.id }}')">
+                    <div class="name">
+                        {{ style.name }}
+                        {% if style.id == active_style_id %}
+                        <span class="badge">ACTIVE</span>
+                        {% endif %}
+                    </div>
+                    <span class="toggle-icon" id="icon-{{ style.id }}">▼</span>
+                </div>
+                <div class="style-body" id="body-{{ style.id }}">
+                    <!-- View mode -->
+                    <div id="view-{{ style.id }}">
+                        <div class="form-group" style="margin-bottom:8px;">
+                            <label>Prompt</label>
+                            <div class="prompt-preview">{{ style.prompt }}</div>
+                        </div>
+                        <div class="style-actions">
+                            <button class="btn btn-outline btn-sm" onclick="startEdit('{{ style.id }}')">✏️ Edit</button>
+                            {% if style.id != active_style_id %}
+                            <button class="btn btn-primary btn-sm" onclick="setActive('{{ style.id }}')">⭐ Activate</button>
+                            {% endif %}
+                            <form method="post" action="/delete_style/{{ style.id }}" style="display:inline;"
+                                  onsubmit="return confirm('Delete style \'{{ style.name }}\'?')">
+                                <button type="submit" class="btn btn-danger btn-sm">🗑️ Delete</button>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- Edit mode -->
+                    <div id="edit-{{ style.id }}" style="display:none;">
+                        <form method="post" action="/edit_style/{{ style.id }}">
+                            <div class="form-group">
+                                <label>Name</label>
+                                <input type="text" name="style_name" value="{{ style.name }}" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Prompt</label>
+                                <textarea name="style_prompt" required style="min-height:180px;">{{ style.prompt }}</textarea>
+                            </div>
+                            <div class="style-actions">
+                                <button type="submit" class="btn btn-success btn-sm">💾 Save</button>
+                                <button type="button" class="btn btn-outline btn-sm" onclick="cancelEdit('{{ style.id }}')">Cancel</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- Tips -->
+        <div class="card">
+            <h2><span class="icon">💡</span> Prompt Tips</h2>
+            <div style="font-size:.88em;color:var(--text-dim);line-height:1.6;">
+                <p style="margin-bottom:8px;">For best results:</p>
+                <p style="margin-bottom:6px;">
+                    <strong style="color:var(--text);">1.</strong> Always start with
+                    <code style="background:var(--surface2);padding:2px 6px;border-radius:4px;">TASK: Transform this photograph into...</code>
+                </p>
+                <p style="margin-bottom:6px;">
+                    <strong style="color:var(--text);">2.</strong> Explicitly ask for people to remain recognizable
+                </p>
+                <p style="margin-bottom:6px;">
+                    <strong style="color:var(--text);">3.</strong> Describe how to handle both indoor and outdoor backgrounds
+                </p>
+                <p style="margin-bottom:6px;">
+                    <strong style="color:var(--text);">4.</strong> Include "No text, watermarks, or logos"
+                </p>
+                <p>
+                    <strong style="color:var(--text);">5.</strong> End with
+                    <code style="background:var(--surface2);padding:2px 6px;border-radius:4px;">OUTPUT: Generate the transformed image now.</code>
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function toggleStyle(id) {
+            const body = document.getElementById('body-' + id);
+            const icon = document.getElementById('icon-' + id);
+            body.classList.toggle('open');
+            icon.classList.toggle('open');
+        }
+
+        function startEdit(id) {
+            document.getElementById('view-' + id).style.display = 'none';
+            document.getElementById('edit-' + id).style.display = 'block';
+        }
+
+        function cancelEdit(id) {
+            document.getElementById('view-' + id).style.display = 'block';
+            document.getElementById('edit-' + id).style.display = 'none';
+        }
+
+        function setActive(id) {
+            fetch('/set_active_style', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({style_id: id})
+            }).then(() => {
+                window.location.reload();
+            });
+        }
+    </script>
+</body>
+</html>

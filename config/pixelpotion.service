@@ -1,0 +1,16 @@
+[Unit]
+Description=PixelPotion - Raspberry Pi AI Style Camera
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/pi/pixelpotion
+ExecStart=/usr/bin/python3 /home/pi/pixelpotion/app.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

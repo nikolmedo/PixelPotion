@@ -1,0 +1,30 @@
+{
+  "gemini_api_key": "",
+  "telegram_bot_token": "",
+  "telegram_chat_id": "",
+  "wifi_ssid": "",
+  "wifi_password": "",
+  "wifi_connected": false,
+  "gpio_pin": 17,
+  "camera_resolution": [2592, 1944],
+  "ap_ssid": "PixelPotion-Setup",
+  "ap_password": "pixelpotion123",
+  "active_style_id": "pixar",
+  "styles": [
+    {
+      "id": "pixar",
+      "name": "Pixar 3D",
+      "prompt": "TASK: Transform this input photograph into a Pixar / Disney 3D animation style illustration. You MUST output a new stylized image.\n\nSTYLE REQUIREMENTS:\n- Render everything as a high-quality 3D CGI scene, exactly like a frame from a Pixar movie (e.g. Coco, Up, Inside Out, Toy Story).\n- Use smooth, soft skin with subtle subsurface scattering on characters.\n- Eyes should be slightly larger and more expressive but keep each person's unique eye color, eye shape, and distinctive facial features so they remain immediately recognizable.\n- Maintain the exact same hairstyle, hair color, clothing, poses, expressions, and body proportions of every person in the photo.\n- Apply warm, cinematic Pixar-style lighting with soft shadows and rim lighting.\n\nBACKGROUND RULES:\n- Convert the background into the same 3D Pixar style.\n- If the scene is indoors, keep the same room type but make it cleaner, more organized, and visually appealing — remove clutter, straighten objects, and add warm ambient lighting.\n- If outdoors, enhance with Pixar-style skies, foliage, and lighting.\n\nCOMPOSITION:\n- Keep the same framing, camera angle, and aspect ratio as the original.\n- Do not add any text, watermarks, borders, or logos.\n- Do not change the number of people or their positions.\n\nOUTPUT: Generate the transformed image now."
+    },
+    {
+      "id": "anime",
+      "name": "Anime / Manga",
+      "prompt": "TASK: Transform this photograph into a Japanese anime illustration. You MUST output a new stylized image.\n\nSTYLE: High-quality anime art, clean linework, cel-shading, vibrant colors. Similar to Studio Ghibli or modern anime films.\nPEOPLE: Keep every person's face recognizable — same eye color, hairstyle, hair color, clothing, expression, and pose. Stylize proportions slightly (larger eyes, sharper features) but they must still look like themselves.\nBACKGROUND: Convert to anime-painted style. If indoors, clean up and organize the space. If outdoors, add beautiful anime skies.\nRULES: Same framing and angle. No text, watermarks, or logos.\nOUTPUT: Generate the transformed image now."
+    },
+    {
+      "id": "watercolor",
+      "name": "Watercolor",
+      "prompt": "TASK: Transform this photograph into a beautiful watercolor painting. You MUST output a new stylized image.\n\nSTYLE: Soft, flowing watercolor technique with visible brush strokes, paint bleeding effects, and a dreamy quality. Professional art level.\nPEOPLE: Keep each person recognizable with their distinctive features, hairstyle, clothing, and expression. Apply watercolor texture to skin and clothing while maintaining likeness.\nBACKGROUND: Transform into loose watercolor washes. If indoors, simplify and organize. Add gentle color bleeds at edges.\nRULES: Same composition and angle. No text or watermarks.\nOUTPUT: Generate the transformed image now."
+    }
+  ]
+}
