@@ -16,6 +16,13 @@ GEMINI_MODELS = [
 
 MAX_RETRIES = 3
 
+# Per-attempt timeout for the Gemini SDK (milliseconds). Without this the
+# google-genai client can hang indefinitely on flaky WiFi.
+GEMINI_TIMEOUT_MS = 120_000
+
+# How often the background retry loop scans PHOTOS_PENDING (seconds).
+RETRY_INTERVAL_SECONDS = 300
+
 # ---------------------------------------------------------------------------
 # Default runtime configuration (loaded from default_config.json)
 # ---------------------------------------------------------------------------

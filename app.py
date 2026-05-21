@@ -23,7 +23,13 @@ from flask import (
     flash, jsonify, send_from_directory
 )
 
-from constants import GEMINI_MODELS, MAX_RETRIES, DEFAULT_CONFIG
+from constants import (
+    GEMINI_MODELS,
+    MAX_RETRIES,
+    GEMINI_TIMEOUT_MS,
+    RETRY_INTERVAL_SECONDS,
+    DEFAULT_CONFIG,
+)
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -253,8 +259,12 @@ def process_with_gemini(image_path, prompt=None):
 
     try:
         from google import genai
+        from google.genai import types as genai_types
         from PIL import Image
-        client = genai.Client(api_key=api_key)
+        client = genai.Client(
+            api_key=api_key,
+            http_options=genai_types.HttpOptions(timeout=GEMINI_TIMEOUT_MS),
+        )
         with open(image_path, "rb") as f:
             image_data = f.read()
 
@@ -321,6 +331,23 @@ processing_lock = threading.Lock()
 status = {"last_action": "Waiting...", "processing": False}
 
 
+def ensure_in_pending(photo_path):
+    """Mark the photo as pending so it survives a restart / can be retried."""
+    import shutil
+    pending_path = PHOTOS_PENDING / Path(photo_path).name
+    if not pending_path.exists():
+        try:
+            shutil.copy2(photo_path, pending_path)
+        except Exception as e:
+            log.error("Could not copy to pending: %s", e)
+
+
+def remove_from_pending(photo_path):
+    """Photo has been delivered — remove it from the pending queue."""
+    pending_path = PHOTOS_PENDING / Path(photo_path).name
+    pending_path.unlink(missing_ok=True)
+
+
 def full_pipeline(photo_path=None, style_id=None):
     if not processing_lock.acquire(blocking=False):
         log.warning("Pipeline already running, skipping")
@@ -345,32 +372,31 @@ def full_pipeline(photo_path=None, style_id=None):
                 status["last_action"] = "Error: could not capture photo"
                 return
 
+        # Every photo that enters the pipeline is pending until delivered.
+        ensure_in_pending(photo_path)
+
         # 2. Check WiFi
         if not is_wifi_connected():
-            filename = Path(photo_path).name
-            pending_path = PHOTOS_PENDING / filename
-            if str(photo_path) != str(pending_path):
-                import shutil
-                shutil.copy2(photo_path, pending_path)
-            status["last_action"] = f"No WiFi — saved to pending: {filename}"
+            status["last_action"] = f"No WiFi — kept in pending: {Path(photo_path).name}"
             return
 
         # 3. Process
         status["last_action"] = f"Adding potion ({style_name})..."
         processed = process_with_gemini(photo_path, prompt)
         if not processed:
-            status["last_action"] = "Error: Gemini could not process the image"
+            status["last_action"] = "Gemini failed — kept in pending for retry"
             return
 
         # 4. Send
         status["last_action"] = "Sending via Telegram..."
         success = send_telegram_photos(photo_path, processed, style_name)
         if success:
+            remove_from_pending(photo_path)
             status["last_action"] = f"✅ Done ({style_name}): {Path(photo_path).name}"
         else:
-            status["last_action"] = "Error: could not send via Telegram"
+            status["last_action"] = "Telegram failed — kept in pending for retry"
     except Exception as e:
-        status["last_action"] = f"Error: {e}"
+        status["last_action"] = f"Error: {e} — kept in pending"
         log.error("Pipeline error: %s", e)
     finally:
         status["processing"] = False
@@ -381,13 +407,33 @@ def process_pending_photo(filename, style_id=None):
     pending_path = PHOTOS_PENDING / filename
     if not pending_path.exists():
         return False
-    import shutil
     orig_path = PHOTOS_ORIGINAL / filename
-    shutil.copy2(pending_path, orig_path)
+    if not orig_path.exists():
+        import shutil
+        shutil.copy2(pending_path, orig_path)
     full_pipeline(str(orig_path), style_id=style_id)
-    if not status.get("processing"):
-        pending_path.unlink(missing_ok=True)
     return True
+
+
+def auto_retry_loop():
+    """Periodically retry photos that are still in PHOTOS_PENDING."""
+    while True:
+        time.sleep(RETRY_INTERVAL_SECONDS)
+        try:
+            if status.get("processing") or not is_wifi_connected():
+                continue
+            pending = sorted(PHOTOS_PENDING.glob("*.jpg"))
+            if not pending:
+                continue
+            log.info("Auto-retry: %d pending photo(s)", len(pending))
+            style_id = config.get("active_style_id")
+            for p in pending:
+                if status.get("processing") or not is_wifi_connected():
+                    break
+                process_pending_photo(p.name, style_id=style_id)
+                time.sleep(2)
+        except Exception as e:
+            log.error("Auto-retry loop error: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -666,6 +712,8 @@ def main():
         start_ap_mode()
 
     threading.Thread(target=gpio_button_listener, daemon=True).start()
+    threading.Thread(target=auto_retry_loop, daemon=True).start()
+    log.info("Auto-retry loop running every %d seconds", RETRY_INTERVAL_SECONDS)
     log.info("Web server on 0.0.0.0:8080")
     app.run(host="0.0.0.0", port=8080, debug=False, use_reloader=False)
 
