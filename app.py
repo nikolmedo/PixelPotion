@@ -172,11 +172,26 @@ def start_ap_mode():
 # ---------------------------------------------------------------------------
 camera_lock = threading.Lock()
 
+# Per-module capture controls. IMX708 (Arducam) needs fixed AWB gains to avoid
+# a reddish tint with the default libcamera tuning file; IMX219 (Module 2.1)
+# works correctly with the built-in auto white balance.
+CAMERA_PROFILES = {
+    "imx219": {"label": "Camera Module 2.1 (IMX219)", "controls": {}},
+    "imx708": {
+        "label": "Camera Module 3 (IMX708)",
+        "controls": {"AwbEnable": False, "ColourGains": (1.0, 2.5)},
+    },
+}
+
 
 def capture_photo() -> str | None:
     with camera_lock:
         try:
             from picamera2 import Picamera2
+            available = Picamera2.global_camera_info()
+            if not available:
+                log.error("Error capturing photo: no cameras detected")
+                return None
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"photo_{ts}.jpg"
             cam = Picamera2()
@@ -184,6 +199,10 @@ def capture_photo() -> str | None:
                 main={"size": tuple(config["camera_resolution"])}
             )
             cam.configure(cam_config)
+            module = config.get("camera_module", "imx708")
+            controls = CAMERA_PROFILES.get(module, {}).get("controls", {})
+            if controls:
+                cam.set_controls(controls)
             cam.start()
             time.sleep(2)
             filepath = str(PHOTOS_ORIGINAL / filename)
@@ -408,12 +427,14 @@ def gpio_button_listener():
 @app.route("/")
 def index():
     pending_photos = sorted(PHOTOS_PENDING.glob("*.jpg"), reverse=True)
+    camera_modules = [{"id": k, "label": v["label"]} for k, v in CAMERA_PROFILES.items()]
     return render_template(
         "index.html", config=config, status=status,
         wifi_connected=is_wifi_connected(),
         pending_count=len(list(pending_photos)),
         styles=config.get("styles", []),
         active_style_id=config.get("active_style_id", ""),
+        camera_modules=camera_modules,
     )
 
 
@@ -422,6 +443,9 @@ def save_config_route():
     config["gemini_api_key"] = request.form.get("gemini_api_key", "").strip()
     config["telegram_bot_token"] = request.form.get("telegram_bot_token", "").strip()
     config["telegram_chat_id"] = request.form.get("telegram_chat_id", "").strip()
+    module = request.form.get("camera_module", "").strip()
+    if module in CAMERA_PROFILES:
+        config["camera_module"] = module
     save_config(config)
     flash("Configuration saved.", "success")
     return redirect(url_for("index"))

@@ -191,6 +191,15 @@
                     <input type="text" name="telegram_chat_id" value="{{ config.telegram_chat_id }}" placeholder="-1001234567890">
                     <p class="hint">Get yours from <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a></p>
                 </div>
+                <div class="form-group">
+                    <label>Camera Module</label>
+                    <select name="camera_module">
+                        {% for m in camera_modules %}
+                        <option value="{{ m.id }}" {% if config.camera_module == m.id %}selected{% endif %}>{{ m.label }}</option>
+                        {% endfor %}
+                    </select>
+                    <p class="hint">Select the physical camera attached to the Pi.</p>
+                </div>
                 <button type="submit" class="btn btn-primary btn-block">💾 Save Configuration</button>
             </form>
         </div>

@@ -76,6 +76,7 @@ cp -v constants.py "${INSTALL_DIR}/"
 cp -v default_config.json "${INSTALL_DIR}/"
 cp -v templates/*.html "${INSTALL_DIR}/templates/"
 cp -v requirements.txt "${INSTALL_DIR}/"
+[ -f VERSION ] && cp -v VERSION "${INSTALL_DIR}/"
 
 echo ""
 echo -e "${GREEN}[5/7] Installing Python dependencies...${NC}"

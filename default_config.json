@@ -6,6 +6,7 @@
   "wifi_password": "",
   "wifi_connected": false,
   "gpio_pin": 17,
+  "camera_module": "imx708",
   "camera_resolution": [2592, 1944],
   "ap_ssid": "PixelPotion-Setup",
   "ap_password": "pixelpotion123",
