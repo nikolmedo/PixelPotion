@@ -19,6 +19,7 @@ Built for makers, photographers, and anyone who wants to add a spark of magic to
 - **Web configuration portal** — Set up WiFi, API keys, and styles from any browser on your phone or laptop.
 - **Custom styles** — Create unlimited styles with your own Gemini prompts directly from the web UI.
 - **Standalone hotspot** — Creates its own WiFi access point (`PixelPotion-Setup`) for initial configuration — no router needed.
+- **Multi-provider ready** — AI backend is provider-agnostic. Gemini runs by default; swapping to OpenAI or Anthropic only requires adding the implementation in `ai_provider.py`.
 
 ---
 
@@ -251,15 +252,17 @@ Open the **Styles** tab in the web portal to:
 
 ```text
 pixelpotion/
-├── app.py                  # Main application
-├── constants.py            # AI models, retry count; loads DEFAULT_CONFIG from JSON
+├── app.py                  # Main application — Flask server, GPIO, camera, Telegram
+├── ai_provider.py          # AI provider abstraction — dispatches to Gemini (or future providers)
+├── constants.py            # GEMINI_MODELS, paths, retry/timeout settings; loads DEFAULT_CONFIG
 ├── default_config.json     # Factory defaults: AP credentials, styles, prompts
 ├── requirements.txt        # Python dependencies
 ├── install.sh              # Installer script for Raspberry Pi
+├── update.sh               # Auto-update script — pulls latest release and reinstalls deps
 ├── config/
 │   ├── hostapd.conf        # Access point configuration
 │   ├── dnsmasq.conf        # DHCP/DNS configuration for AP
-│   └── pixelpotion.service # systemd service unit
+│   └── pixelpotion.service # systemd service unit (runs inside venv)
 └── templates/
     ├── index.html          # Capture & configuration portal
     ├── styles.html         # Style management
@@ -271,11 +274,13 @@ pixelpotion/
 ```text
 /home/pi/pixelpotion/
 ├── app.py
+├── ai_provider.py
 ├── constants.py
 ├── default_config.json
 ├── config.json             # Runtime config (API keys, WiFi) — gitignored, auto-created
 ├── pixelpotion.log         # Application logs — gitignored
 ├── requirements.txt
+├── venv/                   # Python virtual environment (created by install.sh / update.sh)
 ├── templates/
 │   ├── index.html
 │   ├── styles.html
@@ -328,9 +333,38 @@ sudo systemctl restart pixelpotion
 
 ---
 
+## 🔄 Updating
+
+Run the update script to pull the latest release from GitHub and reinstall Python dependencies:
+
+```bash
+ssh pi@pixelpotion.local
+sudo bash /home/pi/pixelpotion/update.sh
+```
+
+The script:
+
+1. Checks GitHub for a newer release
+2. Downloads and extracts it
+3. Backs up `config.json`
+4. Stops the service and replaces code files
+5. Creates or reuses the Python `venv` and runs `pip install -r requirements.txt`
+6. Restarts the service
+
+Use `--force` to reinstall even if already on the latest version:
+
+```bash
+sudo bash /home/pi/pixelpotion/update.sh --force
+```
+
+---
+
 ## 📋 Useful Commands
 
 ```bash
+# Update to the latest release
+sudo bash /home/pi/pixelpotion/update.sh
+
 # Stream live logs
 sudo journalctl -u pixelpotion -f
 

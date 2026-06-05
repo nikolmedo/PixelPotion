@@ -1,6 +1,7 @@
 flask>=3.0
 requests>=2.31
 Pillow>=10.0
-google-genai>=1.0
+genkit==0.6.0
+genkit-plugin-google-genai==0.6.0
 RPi.GPIO>=0.7
 picamera2>=0.3
