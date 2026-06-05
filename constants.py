@@ -6,7 +6,12 @@ import json
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Gemini AI models (tried in order, first success wins)
+# AI provider selection
+# ---------------------------------------------------------------------------
+AI_PROVIDER = "gemini"  # Options: "gemini" | "openai" | "anthropic"
+
+# ---------------------------------------------------------------------------
+# Gemini models (tried in order, first success wins)
 # ---------------------------------------------------------------------------
 GEMINI_MODELS = [
     "gemini-3.1-flash-image-preview",
@@ -16,12 +21,17 @@ GEMINI_MODELS = [
 
 MAX_RETRIES = 3
 
-# Per-attempt timeout for the Gemini SDK (milliseconds). Without this the
-# google-genai client can hang indefinitely on flaky WiFi.
+# Timeout in milliseconds for HttpOptions. google-genai SDK uses ms.
 GEMINI_TIMEOUT_MS = 120_000
 
 # How often the background retry loop scans PHOTOS_PENDING (seconds).
 RETRY_INTERVAL_SECONDS = 300
+
+# ---------------------------------------------------------------------------
+# Shared paths
+# ---------------------------------------------------------------------------
+BASE_DIR = Path(__file__).resolve().parent
+PHOTOS_PROCESSED = BASE_DIR / "photos" / "processed"
 
 # ---------------------------------------------------------------------------
 # Default runtime configuration (loaded from default_config.json)

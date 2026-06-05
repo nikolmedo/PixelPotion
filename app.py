@@ -10,13 +10,11 @@ import json
 import time
 import uuid
 import signal
-import base64
 import logging
 import threading
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from io import BytesIO
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
@@ -24,12 +22,11 @@ from flask import (
 )
 
 from constants import (
-    GEMINI_MODELS,
-    MAX_RETRIES,
-    GEMINI_TIMEOUT_MS,
     RETRY_INTERVAL_SECONDS,
     DEFAULT_CONFIG,
+    PHOTOS_PROCESSED,
 )
+from ai_provider import process_image
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -50,7 +47,6 @@ log = logging.getLogger("pixelpotion")
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = BASE_DIR / "config.json"
 PHOTOS_ORIGINAL = BASE_DIR / "photos" / "original"
-PHOTOS_PROCESSED = BASE_DIR / "photos" / "processed"
 PHOTOS_PENDING = BASE_DIR / "photos" / "pending"
 
 for d in [PHOTOS_ORIGINAL, PHOTOS_PROCESSED, PHOTOS_PENDING]:
@@ -223,72 +219,20 @@ def capture_photo() -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Gemini AI processing
+# AI processing
 # ---------------------------------------------------------------------------
-def _try_generate_image(client, model, image_data, prompt):
-    from google.genai import types
-    image_part = types.Part.from_bytes(data=image_data, mime_type="image/jpeg")
-
-    if "2.5-flash-image" in model or "3-pro" in model:
-        gen_config = types.GenerateContentConfig(
-            response_modalities=["IMAGE"],
-            image_config=types.ImageConfig(aspect_ratio="3:4"),
-        )
-    else:
-        gen_config = types.GenerateContentConfig(
-            response_modalities=["TEXT", "IMAGE"],
-        )
-
-    response = client.models.generate_content(
-        model=model, contents=[prompt, image_part], config=gen_config,
-    )
-    if response.candidates:
-        for part in response.candidates[0].content.parts:
-            if part.inline_data is not None:
-                return part.inline_data.data
-    return None
-
-
-def process_with_gemini(image_path, prompt=None):
-    api_key = config.get("gemini_api_key", "")
+def process_with_ai(image_path, prompt=None):
+    api_key = config.get("gemini_api_key", "").strip()
     if not api_key:
-        log.error("Gemini API key not configured")
+        log.error("AI API key not configured")
         return None
+    log.debug("AI processing: key length=%d", len(api_key))
     if prompt is None:
         prompt = get_active_prompt()
-
     try:
-        from google import genai
-        from google.genai import types as genai_types
-        from PIL import Image
-        client = genai.Client(
-            api_key=api_key,
-            http_options=genai_types.HttpOptions(timeout=GEMINI_TIMEOUT_MS),
-        )
-        with open(image_path, "rb") as f:
-            image_data = f.read()
-
-        for model in GEMINI_MODELS:
-            for attempt in range(1, MAX_RETRIES + 1):
-                log.info("Processing with %s (attempt %d/%d)", model, attempt, MAX_RETRIES)
-                try:
-                    img_bytes = _try_generate_image(client, model, image_data, prompt)
-                    if img_bytes:
-                        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        out_path = str(PHOTOS_PROCESSED / f"styled_{ts}.jpg")
-                        Image.open(BytesIO(img_bytes)).save(out_path, "JPEG", quality=95)
-                        log.info("Image processed with %s (attempt %d): %s", model, attempt, out_path)
-                        return out_path
-                    log.warning("%s attempt %d: no image returned", model, attempt)
-                except Exception as inner_e:
-                    log.warning("%s attempt %d failed: %s", model, attempt, inner_e)
-                if attempt < MAX_RETRIES:
-                    time.sleep(2 ** attempt)
-            log.warning("Model %s exhausted retries", model)
-        log.error("All models failed")
-        return None
+        return process_image(image_path, prompt, api_key)
     except Exception as e:
-        log.error("Error processing with Gemini: %s", e)
+        log.error("Error in AI processing: %s", e)
         return None
 
 
@@ -382,9 +326,9 @@ def full_pipeline(photo_path=None, style_id=None):
 
         # 3. Process
         status["last_action"] = f"Adding potion ({style_name})..."
-        processed = process_with_gemini(photo_path, prompt)
+        processed = process_with_ai(photo_path, prompt)
         if not processed:
-            status["last_action"] = "Gemini failed — kept in pending for retry"
+            status["last_action"] = "AI processing failed — kept in pending for retry"
             return
 
         # 4. Send

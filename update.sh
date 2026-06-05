@@ -106,14 +106,14 @@ fi
 
 # ---- Download tarball ----
 echo ""
-echo -e "${GREEN}[1/5] Downloading release...${NC}"
+echo -e "${GREEN}[1/6] Downloading release...${NC}"
 if ! curl -fsSL -o "${TMP_DIR}/release.tar.gz" "${TARBALL}"; then
     echo -e "${RED}Error: could not download ${TARBALL}${NC}"
     exit 1
 fi
 
 # ---- Extract ----
-echo -e "${GREEN}[2/5] Extracting...${NC}"
+echo -e "${GREEN}[2/6] Extracting...${NC}"
 tar -xzf "${TMP_DIR}/release.tar.gz" -C "${TMP_DIR}"
 SRC_DIR=$(find "${TMP_DIR}" -maxdepth 1 -mindepth 1 -type d | head -n 1)
 if [ -z "${SRC_DIR}" ] || [ ! -f "${SRC_DIR}/app.py" ]; then
@@ -122,13 +122,13 @@ if [ -z "${SRC_DIR}" ] || [ ! -f "${SRC_DIR}/app.py" ]; then
 fi
 
 # ---- Backup config.json ----
-echo -e "${GREEN}[3/5] Backing up config.json...${NC}"
+echo -e "${GREEN}[3/6] Backing up config.json...${NC}"
 if [ -f "${INSTALL_DIR}/config.json" ]; then
     cp -v "${INSTALL_DIR}/config.json" "${INSTALL_DIR}/config.json.bak"
 fi
 
 # ---- Stop service ----
-echo -e "${GREEN}[4/5] Updating files...${NC}"
+echo -e "${GREEN}[4/6] Updating files...${NC}"
 SERVICE_WAS_ACTIVE=0
 if systemctl is-active --quiet pixelpotion.service; then
     SERVICE_WAS_ACTIVE=1
@@ -136,10 +136,9 @@ if systemctl is-active --quiet pixelpotion.service; then
 fi
 
 # Copy code files (NOT config.json, NOT photos/)
-cp -v "${SRC_DIR}/app.py" "${INSTALL_DIR}/"
-cp -v "${SRC_DIR}/constants.py" "${INSTALL_DIR}/"
-cp -v "${SRC_DIR}/default_config.json" "${INSTALL_DIR}/"
-cp -v "${SRC_DIR}/requirements.txt" "${INSTALL_DIR}/" 2>/dev/null || true
+for f in app.py ai_provider.py constants.py default_config.json requirements.txt; do
+    [ -f "${SRC_DIR}/${f}" ] && cp -v "${SRC_DIR}/${f}" "${INSTALL_DIR}/"
+done
 mkdir -p "${INSTALL_DIR}/templates"
 cp -v "${SRC_DIR}"/templates/*.html "${INSTALL_DIR}/templates/"
 
@@ -158,8 +157,18 @@ chown pi:pi "${INSTALL_DIR}/VERSION"
 # Re-apply ownership
 chown -R pi:pi "${INSTALL_DIR}"
 
+# ---- Install dependencies ----
+echo -e "${GREEN}[5/6] Installing Python dependencies...${NC}"
+VENV_DIR="${INSTALL_DIR}/venv"
+if [ ! -d "${VENV_DIR}" ]; then
+    echo "  Creating virtual environment..."
+    python3 -m venv --system-site-packages "${VENV_DIR}"
+    chown -R pi:pi "${VENV_DIR}"
+fi
+"${VENV_DIR}/bin/pip" install -r "${INSTALL_DIR}/requirements.txt"
+
 # ---- Restart ----
-echo -e "${GREEN}[5/5] Restarting service...${NC}"
+echo -e "${GREEN}[6/6] Restarting service...${NC}"
 if [ "${SERVICE_WAS_ACTIVE}" -eq 1 ]; then
     systemctl start pixelpotion.service
 fi
