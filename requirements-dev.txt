@@ -1,0 +1,8 @@
+# Test-only dependencies. Hardware/SDK packages (RPi.GPIO, picamera2,
+# genkit/google-genai) are intentionally excluded — the suite mocks them so
+# tests run on any dev machine or CI runner, not just the Raspberry Pi.
+pytest>=8.0
+pytest-mock>=3.12
+flask>=3.0
+requests>=2.31
+Pillow>=10.0
