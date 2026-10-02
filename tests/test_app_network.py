@@ -1,7 +1,10 @@
 """Tests for app.py WiFi helpers — connectivity check and connection flow."""
 
+import os
+import stat
 import subprocess
-from unittest.mock import MagicMock, mock_open
+import sys
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -66,12 +69,27 @@ class TestIsWifiConnected:
 class TestConnectWifi:
     @pytest.fixture
     def quiet_environment(self, monkeypatch, fake_subprocess):
-        """Mute sleeps, capture the wpa_supplicant file, control wifi polling."""
+        """Mute sleeps and capture the wpa_supplicant file at `sudo cp` time.
+
+        The temp file is read the moment it is copied into place, because
+        connect_wifi deletes it right afterwards.
+        """
         fake_time = MagicMock(name="time")
         monkeypatch.setattr(pixelpotion, "time", fake_time)
-        opener = mock_open()
-        monkeypatch.setattr("builtins.open", opener)
-        return fake_subprocess, fake_time, opener
+        copied = {}
+
+        def run(cmd, *args, **kwargs):
+            if cmd[:2] == ["sudo", "cp"]:
+                source = cmd[2]
+                copied["source"] = source
+                copied["destination"] = cmd[3]
+                with open(source, encoding="utf-8") as handle:
+                    copied["content"] = handle.read()
+                copied["mode"] = stat.S_IMODE(os.stat(source).st_mode)
+            return MagicMock(returncode=0)
+
+        fake_subprocess.run.side_effect = run
+        return fake_subprocess, fake_time, copied
 
     def test_returns_true_once_connection_is_detected(
         self, quiet_environment, monkeypatch
@@ -91,7 +109,7 @@ class TestConnectWifi:
         self, quiet_environment, monkeypatch
     ):
         # Arrange
-        _, _, opener = quiet_environment
+        _, _, copied = quiet_environment
         monkeypatch.setattr(
             pixelpotion, "is_wifi_connected", MagicMock(return_value=True)
         )
@@ -100,12 +118,68 @@ class TestConnectWifi:
         pixelpotion.connect_wifi("CasaOlmedo_5G", "patagonia2024!")
 
         # Assert
-        written = "".join(
-            call.args[0] for call in opener().write.call_args_list
-        )
+        written = copied["content"]
         assert 'ssid="CasaOlmedo_5G"' in written
         assert 'psk="patagonia2024!"' in written
         assert "key_mgmt=WPA-PSK" in written
+        assert copied["destination"] == "/etc/wpa_supplicant/wpa_supplicant.conf"
+
+    def test_psk_temp_file_is_removed_after_copy(
+        self, quiet_environment, monkeypatch
+    ):
+        # Arrange
+        _, _, copied = quiet_environment
+        monkeypatch.setattr(
+            pixelpotion, "is_wifi_connected", MagicMock(return_value=True)
+        )
+
+        # Act
+        pixelpotion.connect_wifi("CasaOlmedo_5G", "patagonia2024!")
+
+        # Assert — the plaintext PSK does not linger in a temp directory.
+        assert copied["source"] != "/tmp/wpa_supplicant.conf"
+        assert not os.path.exists(copied["source"])
+
+    def test_psk_temp_file_is_removed_even_when_copy_fails(
+        self, quiet_environment, monkeypatch
+    ):
+        # Arrange
+        fake_subprocess, _, copied = quiet_environment
+        record_copy = fake_subprocess.run.side_effect
+
+        def failing_copy(cmd, *args, **kwargs):
+            record_copy(cmd, *args, **kwargs)
+            if cmd[:2] == ["sudo", "cp"]:
+                raise subprocess.TimeoutExpired(cmd, 5)
+            return MagicMock(returncode=0)
+
+        fake_subprocess.run.side_effect = failing_copy
+        monkeypatch.setattr(
+            pixelpotion, "is_wifi_connected", MagicMock(return_value=True)
+        )
+
+        # Act
+        result = pixelpotion.connect_wifi("CasaOlmedo_5G", "patagonia2024!")
+
+        # Assert
+        assert result is False
+        assert not os.path.exists(copied["source"])
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes only")
+    def test_psk_temp_file_is_private_to_the_service_user(
+        self, quiet_environment, monkeypatch
+    ):
+        # Arrange
+        _, _, copied = quiet_environment
+        monkeypatch.setattr(
+            pixelpotion, "is_wifi_connected", MagicMock(return_value=True)
+        )
+
+        # Act
+        pixelpotion.connect_wifi("CasaOlmedo_5G", "patagonia2024!")
+
+        # Assert
+        assert copied["mode"] == 0o600
 
     def test_returns_false_after_polling_window_expires(
         self, quiet_environment, monkeypatch

@@ -81,6 +81,9 @@ Telegram error) must leave it queued for retry. Don't break this.
   never go back into HTML. A blank secret field on `/save_config` or `/save_wifi` keeps
   the stored value (WiFi: only when the SSID is unchanged; a new SSID with a blank
   password is saved as an open network).
+- **Secrets at rest stay private.** `config.json` is chmod 0600 on every save; the WiFi
+  PSK goes through a `mkstemp` (0600) file that is deleted right after `sudo cp`; logged
+  Telegram exceptions have the bot token redacted (requests embeds the URL in errors).
 - **Failures degrade, never crash.** Hardware/network helpers (`capture_photo`,
   `is_wifi_connected`, `send_telegram_photos`, `process_image`) return `None`/`False`
   on failure instead of raising. Callers rely on this.
@@ -107,7 +110,7 @@ Telegram error) must leave it queued for retry. Don't break this.
 ```bash
 python -m venv .venv
 .venv/Scripts/python -m pip install -r requirements-dev.txt   # Windows
-.venv/Scripts/python -m pytest                                # 84 tests, ~1s
+.venv/Scripts/python -m pytest                                # 120 tests (2 POSIX-only, skipped on Windows), ~1.5s
 ```
 
 - Suite layout mirrors the layers: `test_constants`, `test_ai_provider`, `test_app_config`,
