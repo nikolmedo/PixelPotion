@@ -13,7 +13,6 @@ import uuid
 import signal
 import logging
 import secrets
-import tempfile
 import threading
 import subprocess
 from datetime import datetime
@@ -160,6 +159,26 @@ def verify_csrf_token():
 # ---------------------------------------------------------------------------
 # WiFi helpers
 # ---------------------------------------------------------------------------
+# The service runs as `pi`. Network management goes through sudo, limited to
+# the exact command lines whitelisted in config/pixelpotion.sudoers, so these
+# absolute paths must stay in sync with that file. iwlist and wpa_cli live in
+# /usr/sbin on current Raspberry Pi OS; /sbin is a symlink to it (merged /usr).
+SUDO = "/usr/bin/sudo"
+SYSTEMCTL = "/usr/bin/systemctl"
+TEE = "/usr/bin/tee"
+IWLIST = "/usr/sbin/iwlist"
+WPA_CLI = "/usr/sbin/wpa_cli"
+WPA_SUPPLICANT_CONF = "/etc/wpa_supplicant/wpa_supplicant.conf"
+DHCPCD_CONF = "/etc/dhcpcd.conf"
+
+AP_ADDRESS = "192.168.4.1"
+DHCPCD_AP_BLOCK = (
+    "interface wlan0\n"
+    f"    static ip_address={AP_ADDRESS}/24\n"
+    "    nohook wpa_supplicant\n"
+)
+
+
 def is_wifi_connected() -> bool:
     try:
         out = subprocess.check_output(
@@ -172,38 +191,120 @@ def is_wifi_connected() -> bool:
     return False
 
 
+def is_valid_wifi_credential(value: str) -> bool:
+    """True if the value can be quoted safely inside wpa_supplicant.conf.
+
+    A double quote would end the quoted string early and a line break would
+    start a new directive, so both (and any other control character) are
+    refused rather than escaped.
+    """
+    return '"' not in value and not any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value)
+
+
+def build_wpa_supplicant_conf(ssid: str, password: str) -> str:
+    """Render wpa_supplicant.conf for one network; an empty password means open."""
+    if not (is_valid_wifi_credential(ssid) and is_valid_wifi_credential(password)):
+        raise ValueError("SSID and password cannot contain quotes or line breaks")
+    if password:
+        security = f'    psk="{password}"\n    key_mgmt=WPA-PSK\n'
+    else:
+        security = "    key_mgmt=NONE\n"
+    return (
+        "country=US\n"
+        "ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev\n"
+        "update_config=1\n"
+        "\n"
+        "network={\n"
+        f'    ssid="{ssid}"\n'
+        f"{security}"
+        "}\n"
+    )
+
+
+def with_ap_block(dhcpcd_conf: str) -> str:
+    """Append the static-IP stanza that AP mode needs, unless already present."""
+    if AP_ADDRESS in dhcpcd_conf:
+        return dhcpcd_conf
+    # Trailing empty lines are folded so repeated AP/WiFi switches never pile
+    # up blank lines in the file.
+    base = dhcpcd_conf.rstrip("\r\n")
+    return (base + "\n\n" if base else "") + DHCPCD_AP_BLOCK + "\n"
+
+
+def without_ap_block(dhcpcd_conf: str) -> str:
+    """Drop every `interface wlan0` stanza, up to and including the next empty line.
+
+    Same effect as `sed '/^interface wlan0/,/^$/d'`: a stanza with no empty
+    line after it runs to the end of the file.
+    """
+    kept, skipping = [], False
+    for line in dhcpcd_conf.splitlines(keepends=True):
+        if skipping:
+            if line.rstrip("\r\n") == "":
+                skipping = False
+            continue
+        if line.startswith("interface wlan0"):
+            skipping = True
+            continue
+        kept.append(line)
+    return "".join(kept)
+
+
+def _run_privileged(*command: str, content: str | None = None, timeout: int = 10) -> bool:
+    """Run one command through `sudo -n`; True only if it exits with status 0.
+
+    Every command line passed here must match an entry in
+    config/pixelpotion.sudoers exactly. `-n` makes a missing sudoers rule fail
+    at once instead of waiting for a password prompt that never comes.
+    """
+    result = subprocess.run(
+        [SUDO, "-n", *command],
+        input=content, text=True, timeout=timeout,
+        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+    )
+    if result.returncode != 0:
+        log.error("Privileged command failed (%s): %s",
+                  " ".join(command), (result.stderr or "").strip())
+        return False
+    return True
+
+
+def _write_root_file(path: str, content: str) -> bool:
+    """Replace a root-owned file by piping the content to `sudo tee <path>`."""
+    return _run_privileged(TEE, path, content=content, timeout=5)
+
+
+def _update_dhcpcd_conf(transform) -> bool:
+    """Rewrite /etc/dhcpcd.conf through `transform`; skip the write if unchanged."""
+    try:
+        with open(DHCPCD_CONF, encoding="utf-8") as f:
+            current = f.read()
+    except OSError as e:
+        # NetworkManager-based images have no dhcpcd.conf at all.
+        log.warning("Could not read %s: %s", DHCPCD_CONF, e)
+        return False
+    updated = transform(current)
+    if updated == current:
+        return True
+    return _write_root_file(DHCPCD_CONF, updated)
+
+
 def connect_wifi(ssid: str, password: str) -> bool:
     log.info("Connecting to WiFi: %s", ssid)
     try:
-        subprocess.run(["sudo", "systemctl", "stop", "hostapd"], timeout=10)
-        subprocess.run(["sudo", "systemctl", "stop", "dnsmasq"], timeout=10)
-        wpa_conf = f'''country=US
-ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
-update_config=1
-
-network={{
-    ssid="{ssid}"
-    psk="{password}"
-    key_mgmt=WPA-PSK
-}}
-'''
-        # The PSK is written to a private (0600) temp file that only lives
-        # until it has been copied into place.
-        fd, wpa_tmp = tempfile.mkstemp(prefix="pixelpotion-wpa-", suffix=".conf")
-        try:
-            with os.fdopen(fd, "w") as f:
-                f.write(wpa_conf)
-            subprocess.run(["sudo", "cp", wpa_tmp,
-                            "/etc/wpa_supplicant/wpa_supplicant.conf"], timeout=5)
-        finally:
-            try:
-                os.unlink(wpa_tmp)
-            except OSError:
-                pass
-        subprocess.run(["sudo", "bash", "-c",
-                        "sed -i '/^interface wlan0/,/^$/d' /etc/dhcpcd.conf"], timeout=5)
-        subprocess.run(["sudo", "systemctl", "restart", "dhcpcd"], timeout=15)
-        subprocess.run(["sudo", "wpa_cli", "-i", "wlan0", "reconfigure"], timeout=10)
+        wpa_conf = build_wpa_supplicant_conf(ssid, password)
+    except ValueError as e:
+        log.error("Refusing to connect to WiFi %r: %s", ssid, e)
+        return False
+    try:
+        _run_privileged(SYSTEMCTL, "stop", "hostapd")
+        _run_privileged(SYSTEMCTL, "stop", "dnsmasq")
+        # The PSK goes straight to tee's stdin: no plaintext copy on disk.
+        if not _write_root_file(WPA_SUPPLICANT_CONF, wpa_conf):
+            return False
+        _update_dhcpcd_conf(without_ap_block)
+        _run_privileged(SYSTEMCTL, "restart", "dhcpcd", timeout=15)
+        _run_privileged(WPA_CLI, "-i", "wlan0", "reconfigure")
         for _ in range(20):
             time.sleep(1)
             if is_wifi_connected():
@@ -219,16 +320,11 @@ network={{
 def start_ap_mode():
     log.info("Starting Access Point mode: %s", config["ap_ssid"])
     try:
-        dhcpcd_ap = "\ninterface wlan0\n    static ip_address=192.168.4.1/24\n    nohook wpa_supplicant\n"
-        with open("/etc/dhcpcd.conf") as f:
-            content = f.read()
-        if "192.168.4.1" not in content:
-            subprocess.run(["sudo", "bash", "-c",
-                            f"echo '{dhcpcd_ap}' >> /etc/dhcpcd.conf"], timeout=5)
-        subprocess.run(["sudo", "systemctl", "restart", "dhcpcd"], timeout=15)
+        _update_dhcpcd_conf(with_ap_block)
+        _run_privileged(SYSTEMCTL, "restart", "dhcpcd", timeout=15)
         time.sleep(2)
-        subprocess.run(["sudo", "systemctl", "start", "dnsmasq"], timeout=10)
-        subprocess.run(["sudo", "systemctl", "start", "hostapd"], timeout=10)
+        _run_privileged(SYSTEMCTL, "start", "dnsmasq")
+        _run_privileged(SYSTEMCTL, "start", "hostapd")
         log.info("Access Point started.")
     except Exception as e:
         log.error("Error starting AP mode: %s", e)
@@ -547,6 +643,9 @@ def save_wifi_route():
     # for the same network. A new SSID with a blank password is an open network.
     if not password and ssid == config.get("wifi_ssid"):
         password = config.get("wifi_password", "")
+    if not (is_valid_wifi_credential(ssid) and is_valid_wifi_credential(password)):
+        flash("SSID and password cannot contain quotes or line breaks.", "error")
+        return redirect(url_for("index"))
     config["wifi_ssid"] = ssid
     config["wifi_password"] = password
     save_config(config)
@@ -746,7 +845,7 @@ def status_api():
 def scan_wifi():
     try:
         out = subprocess.check_output(
-            ["sudo", "iwlist", "wlan0", "scan"], text=True, timeout=15
+            [SUDO, "-n", IWLIST, "wlan0", "scan"], text=True, timeout=15
         )
         networks = set()
         for line in out.split("\n"):

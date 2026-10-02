@@ -23,7 +23,7 @@ constants.py            # Tuning values (models, retries, timeouts) + loads defa
 default_config.json     # Factory defaults: AP credentials, built-in styles, GPIO pin
 config.json             # Runtime config (API keys, WiFi) — gitignored, created at runtime
 templates/              # Jinja2 templates: index (portal), styles (CRUD), gallery (pending queue)
-config/                 # hostapd/dnsmasq configs + systemd unit, deployed by install.sh
+config/                 # hostapd/dnsmasq configs, systemd unit, sudoers whitelist — deployed by install.sh
 install.sh / update.sh  # Pi provisioning and GitHub-release auto-update (not unit-tested)
 tests/                  # Pytest suite — see "Testing" below
 ```
@@ -84,6 +84,17 @@ Telegram error) must leave it queued for retry. Don't break this.
 - **Secrets at rest stay private.** `config.json` is chmod 0600 on every save; the WiFi
   PSK goes through a `mkstemp` (0600) file that is deleted right after `sudo cp`; logged
   Telegram exceptions have the bot token redacted (requests embeds the URL in errors).
+- **Unprivileged service + sudo whitelist.** `pixelpotion.service` runs as `pi`
+  (groups `video gpio netdev`). Network management (`connect_wifi`, `start_ap_mode`,
+  `/scan_wifi`) goes through `_run_privileged()` → `sudo -n <exact command>`, and
+  every command line must appear verbatim in `config/pixelpotion.sudoers`
+  (installed as `/etc/sudoers.d/pixelpotion`). Root-owned files are written by piping
+  content to `sudo /usr/bin/tee <path>` — never `sudo bash -c`, never a temp file.
+  Adding a privileged call means adding the exact line to the sudoers file;
+  `tests/test_app_network.py::TestSudoersWhitelist` fails otherwise. Caveat: writing
+  `/etc/dhcpcd.conf` is still root-equivalent in theory (dhcpcd's `script` option),
+  so the whitelist narrows privilege rather than eliminating it; the real fix is the
+  planned NetworkManager migration.
 - **Failures degrade, never crash.** Hardware/network helpers (`capture_photo`,
   `is_wifi_connected`, `send_telegram_photos`, `process_image`) return `None`/`False`
   on failure instead of raising. Callers rely on this.
@@ -110,7 +121,7 @@ Telegram error) must leave it queued for retry. Don't break this.
 ```bash
 python -m venv .venv
 .venv/Scripts/python -m pip install -r requirements-dev.txt   # Windows
-.venv/Scripts/python -m pytest                                # 120 tests (2 POSIX-only, skipped on Windows), ~1.5s
+.venv/Scripts/python -m pytest                                # 135 tests (1 POSIX-only, skipped on Windows), ~1.5s
 ```
 
 - Suite layout mirrors the layers: `test_constants`, `test_ai_provider`, `test_app_config`,
@@ -123,8 +134,7 @@ python -m venv .venv
   `RPi.GPIO`, `picamera2`, or `google-genai` to `requirements-dev.txt`.
 - Test conventions: English only, Arrange-Act-Assert, realistic data (no `foo`/`bar`),
   assert observable behavior (outputs, files, status) over implementation details.
-- Intentionally untested: `auto_retry_loop`, `gpio_button_listener`, `start_ap_mode`,
-  `main` — infinite loops and OS glue whose tests would couple without protecting refactors.
+- Intentionally untested: `auto_retry_loop`, `gpio_button_listener`, `main` — infinite loops and OS glue whose tests would couple without protecting refactors.
 
 ## Conventions
 

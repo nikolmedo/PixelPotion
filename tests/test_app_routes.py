@@ -166,6 +166,23 @@ class TestSaveWifiRoute:
         assert pixelpotion.config["wifi_ssid"] == "CafeDelBarrio-Guest"
         assert pixelpotion.config["wifi_password"] == ""
 
+    def test_rejects_credentials_with_quotes_or_line_breaks(
+        self, client, fake_thread
+    ):
+        # Act
+        client.post("/save_wifi", data={
+            "wifi_ssid": "FibraHogar-2.4G",
+            "wifi_password": 'mate"\nnetwork={',
+        })
+
+        # Assert — nothing saved, no connection attempt.
+        assert pixelpotion.config["wifi_ssid"] == "CasaOlmedo_5G"
+        assert pixelpotion.config["wifi_password"] == "patagonia2024!"
+        assert (
+            "error", "SSID and password cannot contain quotes or line breaks."
+        ) in get_flashes(client)
+        fake_thread.assert_not_called()
+
 
 class TestIndexPage:
     def test_never_renders_stored_secrets(self, client):
