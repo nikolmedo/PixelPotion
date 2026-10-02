@@ -209,29 +209,55 @@ class TestIndexPage:
 
 
 class TestCaptureRoute:
-    def test_starts_pipeline_with_requested_style(self, client, fake_thread):
+    @pytest.fixture
+    def camera_shot(self, monkeypatch, isolated_state):
+        photo = isolated_state.originals / "photo_20260610_143052.jpg"
+        photo.write_bytes(make_jpeg_bytes())
+        capture = MagicMock(return_value=str(photo))
+        monkeypatch.setattr(pixelpotion, "capture_photo", capture)
+        return capture
+
+    def test_captures_into_pending_and_queues_requested_style(
+        self, client, camera_shot, isolated_state
+    ):
         # Act
         response = client.post("/capture", data={"style_id": "anime"})
 
         # Assert
         payload = response.get_json()
         assert payload["ok"] is True
+        assert payload["filename"] == "photo_20260610_143052.jpg"
         assert pixelpotion.config["active_style_id"] == "anime"
-        _, kwargs = fake_thread.call_args
-        assert kwargs["kwargs"] == {"style_id": "anime"}
-        fake_thread.return_value.start.assert_called_once()
+        assert (isolated_state.pending / "photo_20260610_143052.jpg").exists()
+        assert pixelpotion.work_queue.get_nowait() == (
+            "photo_20260610_143052.jpg", "anime"
+        )
 
-    def test_rejects_capture_while_pipeline_is_running(self, client, fake_thread):
+    def test_captures_while_another_photo_is_processing(
+        self, client, camera_shot, isolated_state
+    ):
         # Arrange
         pixelpotion.status["processing"] = True
 
         # Act
         payload = client.post("/capture", data={"style_id": "anime"}).get_json()
 
+        # Assert — processing no longer blocks the camera.
+        assert payload["ok"] is True
+        assert (isolated_state.pending / "photo_20260610_143052.jpg").exists()
+        assert pixelpotion.work_queue.qsize() == 1
+
+    def test_reports_capture_failure(self, client, camera_shot):
+        # Arrange
+        camera_shot.return_value = None
+
+        # Act
+        payload = client.post("/capture", data={"style_id": "anime"}).get_json()
+
         # Assert
         assert payload["ok"] is False
-        assert "already running" in payload["error"]
-        fake_thread.assert_not_called()
+        assert payload["error"] == "Error: could not capture photo"
+        assert pixelpotion.work_queue.qsize() == 0
 
 
 class TestSetActiveStyle:
@@ -493,11 +519,14 @@ class TestGalleryActions:
         assert ("error", "No WiFi connection.") in get_flashes(client)
         fake_thread.assert_not_called()
 
-    def test_process_photo_spawns_background_processing(
-        self, client, fake_thread, monkeypatch
+    def test_process_photo_queues_the_photo_with_the_chosen_style(
+        self, client, monkeypatch, isolated_state
     ):
         # Arrange
         monkeypatch.setattr(pixelpotion, "is_wifi_connected", lambda: True)
+        (isolated_state.pending / "photo_20260609_201500.jpg").write_bytes(
+            make_jpeg_bytes()
+        )
 
         # Act
         client.post("/process_photo", data={
@@ -505,10 +534,60 @@ class TestGalleryActions:
         })
 
         # Assert
-        _, kwargs = fake_thread.call_args
-        assert kwargs["args"] == ("photo_20260609_201500.jpg",)
-        assert kwargs["kwargs"] == {"style_id": "watercolor"}
-        fake_thread.return_value.start.assert_called_once()
+        assert pixelpotion.work_queue.get_nowait() == (
+            "photo_20260609_201500.jpg", "watercolor"
+        )
+        assert (
+            "info", "Queued photo_20260609_201500.jpg for processing."
+        ) in get_flashes(client)
+
+    def test_process_photo_reports_a_missing_photo(self, client, monkeypatch):
+        # Arrange
+        monkeypatch.setattr(pixelpotion, "is_wifi_connected", lambda: True)
+
+        # Act
+        client.post("/process_photo", data={"filename": "photo_19990101_000000.jpg"})
+
+        # Assert
+        assert (
+            "error", "photo_19990101_000000.jpg was not found."
+        ) in get_flashes(client)
+        assert pixelpotion.work_queue.qsize() == 0
+
+    def test_process_all_reports_only_what_it_actually_queued(
+        self, client, monkeypatch, isolated_state
+    ):
+        # Arrange — one of three photos is already waiting in the queue.
+        monkeypatch.setattr(pixelpotion, "is_wifi_connected", lambda: True)
+        names = [
+            "photo_20260608_110001.jpg",
+            "photo_20260608_110002.jpg",
+            "photo_20260608_110003.jpg",
+        ]
+        for name in names:
+            (isolated_state.pending / name).write_bytes(make_jpeg_bytes())
+        pixelpotion.enqueue_pending(names[0])
+
+        # Act
+        client.post("/process_all", data={"style_id": "anime"})
+
+        # Assert
+        assert ("info", "Queued 2 photo(s) for processing.") in get_flashes(client)
+        assert pixelpotion.work_queue.qsize() == 3
+
+    def test_process_all_requires_wifi(self, client, monkeypatch, isolated_state):
+        # Arrange
+        monkeypatch.setattr(pixelpotion, "is_wifi_connected", lambda: False)
+        (isolated_state.pending / "photo_20260608_110001.jpg").write_bytes(
+            make_jpeg_bytes()
+        )
+
+        # Act
+        client.post("/process_all", data={"style_id": "anime"})
+
+        # Assert
+        assert ("error", "No WiFi connection.") in get_flashes(client)
+        assert pixelpotion.work_queue.qsize() == 0
 
 
 class TestStatusApi:
@@ -530,6 +609,7 @@ class TestStatusApi:
         assert payload["active_style_name"] == "Pixar 3D"
         assert payload["last_action"] == "Waiting..."
         assert payload["processing"] is False
+        assert payload["capturing"] is False
 
 
 class TestScanWifi:
