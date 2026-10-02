@@ -65,8 +65,34 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .btn-sm { padding: 6px 12px; font-size: .82em; }
 .btn-block { width: 100%; justify-content: center; }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
-.toggle-password { position: relative; }
-.toggle-password button { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: .85em; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.icon { flex: none; vertical-align: middle; }
+
+/* Secret fields with a show/hide toggle */
+.secret-field { position: relative; }
+.secret-field input { padding-right: 52px; }
+.toggle-secret { position: absolute; right: 0; top: 0; bottom: 0; width: 48px; display: inline-flex; align-items: center; justify-content: center; background: none; border: none; color: var(--text-dim); cursor: pointer; }
+.toggle-secret .when-revealed, .toggle-secret[aria-pressed="true"] .when-concealed { display: none; }
+.toggle-secret[aria-pressed="true"] .when-revealed { display: inline; }
+
+/* Grouped settings inside one form */
+.form-section { border: none; margin-bottom: 18px; }
+.form-section legend { font-weight: 600; margin-bottom: 10px; }
+
+/* Inline notices */
+.notice { border-radius: 8px; padding: 12px 14px; margin-bottom: 14px; font-size: .88em; line-height: 1.5; }
+.notice p + p { margin-top: 6px; }
+.notice-warning { background: rgba(253, 203, 110, .1); border: 1px solid var(--yellow); color: var(--text); }
+
+/* First-run checklist */
+.setup-intro { color: var(--text-dim); font-size: .9em; margin-bottom: 12px; }
+.setup-steps { list-style: none; display: grid; gap: 12px; }
+.setup-step { display: flex; gap: 12px; align-items: flex-start; }
+.setup-step a { color: var(--text); font-weight: 600; }
+.setup-step p { color: var(--text-dim); font-size: .85em; line-height: 1.5; margin-top: 2px; }
+.setup-mark { display: inline-flex; color: var(--red); margin-top: 1px; }
+.setup-step.is-done .setup-mark { color: var(--green); }
+.setup-step.is-done a { color: var(--text-dim); text-decoration: line-through; }
 
 /* Status (index) */
 .status-bar { display: flex; gap: 12px; flex-wrap: wrap; }

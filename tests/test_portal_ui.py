@@ -158,3 +158,98 @@ class TestStaticAssets:
         # Assert — handlers live in static/*.js and read data- attributes.
         for tag, attrs in parsed.tags:
             assert not [k for k in attrs if k.startswith("on")], (tag, attrs)
+
+
+class TestSetupFlow:
+    @pytest.fixture
+    def fresh_device(self, monkeypatch):
+        """A first boot: no keys, no Telegram, still in access-point mode."""
+        monkeypatch.setattr(pixelpotion, "is_wifi_connected", lambda: False)
+        for key in ("gemini_api_key", "telegram_bot_token", "telegram_chat_id"):
+            pixelpotion.config[key] = ""
+
+    def test_checklist_guides_a_fresh_device_to_each_form_section(
+        self, client, fresh_device
+    ):
+        # Act
+        body = client.get("/").get_data(as_text=True)
+        parsed = PageAudit()
+        parsed.feed(body)
+
+        # Assert
+        assert "Get started" in body
+        for anchor in ("#gemini", "#telegram", "#wifi"):
+            assert parsed.find("a", href=anchor), anchor
+            assert parsed.find("fieldset", id=anchor[1:]) or parsed.find("div", id=anchor[1:])
+        assert body.count("To do:") == 3
+        assert "/newbot" in body
+        assert "mobile data" in body
+
+    def test_checklist_marks_finished_steps(self, client, monkeypatch):
+        # Arrange — keys saved, but the camera is still in access-point mode.
+        monkeypatch.setattr(pixelpotion, "is_wifi_connected", lambda: False)
+
+        # Act
+        body = client.get("/").get_data(as_text=True)
+
+        # Assert
+        assert body.count("Done:") == 2
+        assert body.count("To do:") == 1
+
+    def test_checklist_disappears_once_setup_is_complete(self, client, monkeypatch):
+        # Arrange
+        monkeypatch.setattr(pixelpotion, "is_wifi_connected", lambda: True)
+
+        # Act
+        body = client.get("/").get_data(as_text=True)
+
+        # Assert
+        assert "Get started" not in body
+
+    def test_wifi_settings_come_after_the_keys(self, client):
+        # Act
+        body = client.get("/").get_data(as_text=True)
+
+        # Assert
+        assert body.index('action="/save_config"') < body.index('action="/save_wifi"')
+
+    def test_wifi_form_explains_where_to_reconnect(self, client):
+        # Arrange
+        pixelpotion.config["ap_ssid"] = "PixelPotion-Kitchen"
+
+        # Act
+        body = client.get("/").get_data(as_text=True)
+        notice = audit(client, "/").find("div", id="wifiNotice")
+
+        # Assert — shown by script before the first submit, never as alert().
+        assert notice and "hidden" in notice[0]
+        assert "Your phone will disconnect from" in body
+        assert "PixelPotion-Kitchen" in body
+        assert "http://pixelpotion.local:8080" in body
+        assert "alert(" not in (STATIC_DIR / "index.js").read_text(encoding="utf-8")
+
+    def test_every_secret_field_has_a_show_hide_toggle(self, client):
+        # Act
+        parsed = audit(client, "/")
+
+        # Assert
+        secret_ids = {a["id"] for a in parsed.find("input", type="password")}
+        toggles = parsed.find("button", **{"class": "toggle-secret"})
+        assert secret_ids == {"geminiKey", "teleToken", "wifiPass"}
+        assert {t["data-target"] for t in toggles} == secret_ids
+        for toggle in toggles:
+            assert toggle["aria-pressed"] == "false"
+            assert toggle["aria-label"].startswith("Show ")
+
+    @pytest.mark.parametrize("field", [
+        "wifi_ssid", "wifi_password", "gemini_api_key",
+        "telegram_bot_token", "telegram_chat_id",
+    ])
+    def test_credential_fields_disable_phone_autocorrect(self, client, field):
+        # Act
+        (attrs,) = audit(client, "/").find("input", name=field)
+
+        # Assert
+        assert attrs["autocapitalize"] == "none"
+        assert attrs["spellcheck"] == "false"
+        assert attrs["autocomplete"] in ("off", "new-password")

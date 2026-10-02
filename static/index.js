@@ -43,11 +43,35 @@
     }
     captureBtn.addEventListener('click', doCapture);
 
+    // Show/hide reveals only what the user typed: stored secrets are never
+    // sent to the page.
     document.querySelectorAll('.toggle-secret').forEach(btn => {
         btn.addEventListener('click', () => {
             const input = document.getElementById(btn.dataset.target);
-            input.type = input.type === 'password' ? 'text' : 'password';
+            const reveal = input.type === 'password';
+            input.type = reveal ? 'text' : 'password';
+            btn.setAttribute('aria-pressed', String(reveal));
+            btn.setAttribute('aria-label', (reveal ? 'Hide ' : 'Show ') + btn.dataset.label);
         });
+    });
+
+    // Joining a WiFi network ends the setup access point, so the first
+    // submit only explains where to reconnect; the second one connects.
+    const wifiForm = document.getElementById('wifiForm');
+    const wifiNotice = document.getElementById('wifiNotice');
+    const wifiSsid = document.getElementById('wifiSsid');
+    wifiForm.addEventListener('submit', e => {
+        if (!wifiNotice.hidden) return;
+        e.preventDefault();
+        document.getElementById('wifiNoticeSsid').textContent =
+            wifiSsid.value.trim() || 'your WiFi network';
+        wifiNotice.hidden = false;
+        document.getElementById('wifiSubmit').textContent = 'Got it, connect now';
+    });
+    wifiSsid.addEventListener('input', () => {
+        if (wifiNotice.hidden) return;
+        document.getElementById('wifiNoticeSsid').textContent =
+            wifiSsid.value.trim() || 'your WiFi network';
     });
 
     // SSIDs are broadcast by anyone nearby: only ever insert them as text.
