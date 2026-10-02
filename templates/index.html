@@ -164,9 +164,11 @@
                 <div class="form-group">
                     <label>WiFi Password</label>
                     <div class="toggle-password">
-                        <input type="password" name="wifi_password" id="wifiPass" value="{{ config.wifi_password }}" placeholder="••••••••">
+                        <input type="password" name="wifi_password" id="wifiPass" autocomplete="new-password"
+                               placeholder="{{ 'Saved — leave blank to keep' if config.wifi_password else '••••••••' }}">
                         <button type="button" onclick="togglePass('wifiPass')">👁️</button>
                     </div>
+                    <p class="hint">Leave blank to keep the saved password for the same network. A new network with a blank password is saved as an open network.</p>
                 </div>
                 <button type="submit" class="btn btn-success btn-block">📶 Connect to WiFi</button>
             </form>
@@ -178,12 +180,14 @@
             <form method="post" action="/save_config">
                 <div class="form-group">
                     <label>Google Gemini API Key</label>
-                    <input type="password" name="gemini_api_key" id="geminiKey" value="{{ config.gemini_api_key }}" placeholder="AIzaSy...">
+                    <input type="password" name="gemini_api_key" id="geminiKey" autocomplete="off"
+                           placeholder="{{ 'Saved — leave blank to keep' if config.gemini_api_key else 'AIzaSy...' }}">
                     <p class="hint">Get yours at <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a></p>
                 </div>
                 <div class="form-group">
                     <label>Telegram Bot Token</label>
-                    <input type="password" name="telegram_bot_token" id="teleToken" value="{{ config.telegram_bot_token }}" placeholder="123456789:ABCdef...">
+                    <input type="password" name="telegram_bot_token" id="teleToken" autocomplete="off"
+                           placeholder="{{ 'Saved — leave blank to keep' if config.telegram_bot_token else '123456789:ABCdef...' }}">
                     <p class="hint">Create one with <a href="https://t.me/BotFather" target="_blank">@BotFather</a></p>
                 </div>
                 <div class="form-group">
