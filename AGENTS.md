@@ -122,12 +122,15 @@ Telegram error) must leave it queued for retry. Don't break this.
 ```bash
 python -m venv .venv
 .venv/Scripts/python -m pip install -r requirements-dev.txt   # Windows
-.venv/Scripts/python -m pytest                                # 135 tests (1 POSIX-only, skipped on Windows), ~1.5s
+.venv/Scripts/python -m pytest                                # 157 tests (7 POSIX/bash-only, skipped on Windows), ~2s
 ```
 
 - Suite layout mirrors the layers: `test_constants`, `test_ai_provider`, `test_app_config`,
   `test_app_network`, `test_app_camera`, `test_app_telegram`, `test_app_pipeline`,
-  `test_app_routes` (Flask test client).
+  `test_app_routes` (Flask test client), plus `test_deploy_manifest` (static checks of
+  what install.sh/update.sh deploy).
+- CI (`.github/workflows/ci.yml`) runs the suite on Python 3.11 and 3.13, `shellcheck
+  -S warning` on both scripts, and `visudo -cf` on the sudoers file.
 - `tests/conftest.py` is the linchpin: it stubs `logging.FileHandler` before importing
   `app`, and its autouse `isolated_state` fixture redirects all paths to `tmp_path` and
   resets every global (config, status, cached Gemini client) between tests.
@@ -153,7 +156,8 @@ python -m venv .venv
   strictly newer, `v` prefix ignored), backs up `config.json`, redeploys code, sudoers
   and unit, reinstalls deps, restarts the service.
 - **Adding a runtime file** (module, template, data file): list it in `deploy-files.txt`,
-  or it will not reach the Pi.
+  or it will not reach the Pi. `tests/test_deploy_manifest.py` guards local imports,
+  templates, requirements, the service user and the sudoers file.
 - Shell scripts and `config/*` must keep LF endings (`.gitattributes` enforces it).
 - Live logs on the device: `sudo journalctl -u pixelpotion -f`.
 - The web portal binds `0.0.0.0:8080`; AP mode answers at `192.168.4.1`.
