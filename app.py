@@ -347,10 +347,31 @@ def full_pipeline(photo_path=None, style_id=None):
         processing_lock.release()
 
 
+def _resolve_pending(filename) -> Path | None:
+    """Return the pending-queue path for a bare file name, or None if unsafe.
+
+    Filenames come from the web portal, so anything that could escape
+    PHOTOS_PENDING (absolute paths, separators, `..`) is rejected.
+    """
+    if not filename or filename in (".", "..") or "/" in filename or "\\" in filename:
+        return None
+    try:
+        if Path(filename).name != filename:
+            return None
+        pending_dir = PHOTOS_PENDING.resolve()
+        candidate = (pending_dir / filename).resolve()
+    except (ValueError, OSError):
+        return None
+    if candidate.parent != pending_dir:
+        return None
+    return candidate
+
+
 def process_pending_photo(filename, style_id=None):
-    pending_path = PHOTOS_PENDING / filename
-    if not pending_path.exists():
+    pending_path = _resolve_pending(filename)
+    if pending_path is None or not pending_path.exists():
         return False
+    filename = pending_path.name
     orig_path = PHOTOS_ORIGINAL / filename
     if not orig_path.exists():
         import shutil
@@ -563,6 +584,9 @@ def process_photo_route():
     if not filename:
         flash("No file specified.", "error")
         return redirect(url_for("gallery"))
+    if _resolve_pending(filename) is None:
+        flash("Invalid file name.", "error")
+        return redirect(url_for("gallery"))
     if not is_wifi_connected():
         flash("No WiFi connection.", "error")
         return redirect(url_for("gallery"))
@@ -592,18 +616,35 @@ def process_all_route():
 @app.route("/delete_photo", methods=["POST"])
 def delete_photo_route():
     fn = request.form.get("filename", "")
-    if fn:
-        (PHOTOS_PENDING / fn).unlink(missing_ok=True)
+    if not fn:
+        return redirect(url_for("gallery"))
+    path = _resolve_pending(fn)
+    if path is None:
+        flash("Invalid file name.", "error")
+        return redirect(url_for("gallery"))
+    if path.exists():
+        path.unlink()
         flash(f"{fn} deleted.", "success")
+    else:
+        flash(f"{fn} was not found.", "error")
     return redirect(url_for("gallery"))
 
 
 @app.route("/delete_selected", methods=["POST"])
 def delete_selected_route():
     fns = request.form.getlist("selected_photos")
+    deleted, invalid = 0, 0
     for fn in fns:
-        (PHOTOS_PENDING / fn).unlink(missing_ok=True)
-    flash(f"{len(fns)} photo(s) deleted.", "success")
+        path = _resolve_pending(fn)
+        if path is None:
+            invalid += 1
+            continue
+        if path.exists():
+            path.unlink()
+            deleted += 1
+    if invalid:
+        flash(f"Skipped {invalid} invalid file name(s).", "error")
+    flash(f"{deleted} photo(s) deleted.", "success")
     return redirect(url_for("gallery"))
 
 

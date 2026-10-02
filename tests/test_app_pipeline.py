@@ -229,3 +229,24 @@ class TestProcessPendingPhoto:
         restored = isolated_state.originals / SAMPLE_PHOTO_NAME
         assert restored.exists()
         run_pipeline.assert_called_once_with(str(restored), style_id="watercolor")
+
+    @pytest.mark.parametrize("hostile_name", ["../../client_secrets.jpg", "ABSOLUTE"])
+    def test_refuses_files_outside_the_pending_queue(
+        self, monkeypatch, isolated_state, tmp_path, hostile_name
+    ):
+        # Arrange — a photo-looking file that lives outside photos/pending.
+        outside = tmp_path / "client_secrets.jpg"
+        outside.write_bytes(make_jpeg_bytes())
+        if hostile_name == "ABSOLUTE":
+            hostile_name = str(outside)
+        run_pipeline = MagicMock()
+        monkeypatch.setattr(pixelpotion, "full_pipeline", run_pipeline)
+
+        # Act
+        result = pixelpotion.process_pending_photo(hostile_name)
+
+        # Assert — nothing copied into originals, pipeline never started.
+        assert result is False
+        assert list(isolated_state.originals.iterdir()) == []
+        run_pipeline.assert_not_called()
+        assert outside.exists()

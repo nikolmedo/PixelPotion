@@ -242,6 +242,72 @@ class TestGalleryActions:
         remaining = [p.name for p in isolated_state.pending.glob("*.jpg")]
         assert remaining == [names[2]]
 
+    @pytest.mark.parametrize("hostile_name", ["../../config.json", "ABSOLUTE"])
+    def test_delete_photo_never_touches_files_outside_pending(
+        self, client, isolated_state, hostile_name
+    ):
+        # Arrange — the runtime config sits two levels above the pending queue.
+        sentinel = isolated_state.config_path
+        sentinel.write_text('{"gemini_api_key": "AIzaSyDk3v9XbT7eW2qLpZ8mNc4RfYhUj6sQwE0"}')
+        if hostile_name == "ABSOLUTE":
+            hostile_name = str(sentinel)
+
+        # Act
+        client.post("/delete_photo", data={"filename": hostile_name})
+
+        # Assert
+        assert sentinel.exists()
+        assert ("error", "Invalid file name.") in get_flashes(client)
+
+    def test_delete_photo_reports_missing_file(self, client):
+        # Act
+        client.post("/delete_photo", data={"filename": "photo_19990101_000000.jpg"})
+
+        # Assert
+        assert ("error", "photo_19990101_000000.jpg was not found.") in get_flashes(client)
+
+    def test_delete_selected_skips_hostile_names_and_counts_real_deletions(
+        self, client, isolated_state
+    ):
+        # Arrange
+        sentinel = isolated_state.config_path
+        sentinel.write_text('{"telegram_chat_id": "492817365"}')
+        valid = isolated_state.pending / "photo_20260608_110001.jpg"
+        valid.write_bytes(make_jpeg_bytes())
+        selection = [
+            valid.name,
+            "../../config.json",
+            str(sentinel),
+            "photo_19990101_000000.jpg",  # valid name, already gone
+        ]
+
+        # Act
+        client.post("/delete_selected", data={"selected_photos": selection})
+
+        # Assert
+        assert not valid.exists()
+        assert sentinel.exists()
+        flashes = get_flashes(client)
+        assert ("error", "Skipped 2 invalid file name(s).") in flashes
+        assert ("success", "1 photo(s) deleted.") in flashes
+
+    def test_process_photo_rejects_paths_outside_pending(
+        self, client, fake_thread, monkeypatch, isolated_state
+    ):
+        # Arrange
+        monkeypatch.setattr(pixelpotion, "is_wifi_connected", lambda: True)
+        outside = isolated_state.config_path.parent / "shadow.jpg"
+        outside.write_bytes(make_jpeg_bytes())
+
+        # Act
+        client.post("/process_photo", data={"filename": str(outside)})
+
+        # Assert
+        assert ("error", "Invalid file name.") in get_flashes(client)
+        fake_thread.assert_not_called()
+        assert list(isolated_state.originals.iterdir()) == []
+        assert list(isolated_state.pending.iterdir()) == []
+
     def test_process_photo_requires_filename(self, client, fake_thread, monkeypatch):
         # Arrange
         monkeypatch.setattr(pixelpotion, "is_wifi_connected", lambda: True)

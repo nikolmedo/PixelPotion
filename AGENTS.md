@@ -67,6 +67,9 @@ Telegram error) must leave it queued for retry. Don't break this.
   `active_style_id` fall back to defaults.
 - **Camera profiles.** `CAMERA_PROFILES` in `app.py` holds per-sensor controls: IMX708
   needs fixed AWB gains (`ColourGains (1.0, 2.5)`) to avoid a red tint; IMX219 uses auto AWB.
+- **Pending filenames are untrusted.** Any route or helper that turns a portal-supplied
+  filename into a path must go through `_resolve_pending()`, which accepts only a bare
+  file name inside `photos/pending/` and returns `None` otherwise (the service runs as root).
 - **Failures degrade, never crash.** Hardware/network helpers (`capture_photo`,
   `is_wifi_connected`, `send_telegram_photos`, `process_image`) return `None`/`False`
   on failure instead of raising. Callers rely on this.
