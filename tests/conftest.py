@@ -12,11 +12,14 @@ to per-test temporary locations by the autouse `isolated_state` fixture.
 
 Deliberately NOT unit-tested — infinite loops and pure hardware/OS glue whose
 tests would couple to implementation details without protecting refactors:
-auto_retry_loop, gpio_button_listener, start_ap_mode, main.
+auto_retry_loop, gpio_button_listener, _worker_loop, main. Their bodies
+delegate to tested helpers (capture_to_pending, enqueue_pending,
+process_next), which tests drive synchronously.
 """
 
 import copy
 import logging
+import queue
 import sys
 from io import BytesIO
 from pathlib import Path
@@ -24,6 +27,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from flask.testing import FlaskClient
 from PIL import Image
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -83,6 +87,28 @@ BASELINE_CONFIG = {
 
 SAMPLE_PHOTO_NAME = "photo_20260610_143052.jpg"
 
+SUDOERS_PATH = REPO_ROOT / "config" / "pixelpotion.sudoers"
+
+
+def load_sudoers_commands(path: Path = SUDOERS_PATH) -> list[str]:
+    """Return the command lines listed in the sudoers Cmnd_Alias, in order."""
+    logical_lines, pending = [], ""
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not pending and (not line or line.startswith("#")):
+            continue
+        if line.endswith("\\"):
+            pending += line[:-1] + " "
+            continue
+        logical_lines.append(pending + line)
+        pending = ""
+    commands = []
+    for line in logical_lines:
+        if line.startswith("Cmnd_Alias"):
+            _, _, body = line.partition("=")
+            commands.extend(" ".join(part.split()) for part in body.split(","))
+    return commands
+
 
 def make_jpeg_bytes(color=(120, 80, 200), size=(32, 32)) -> bytes:
     """Return a small but structurally valid JPEG payload."""
@@ -104,8 +130,10 @@ def make_gemini_response(image_bytes: bytes | None):
         part.inline_data.data = image_bytes
     candidate = MagicMock()
     candidate.content.parts = [part]
+    candidate.finish_reason = "STOP"
     response = MagicMock()
     response.candidates = [candidate]
+    response.prompt_feedback = None
     return response
 
 
@@ -130,7 +158,17 @@ def isolated_state(tmp_path, monkeypatch):
     pixelpotion.config.clear()
     pixelpotion.config.update(copy.deepcopy(BASELINE_CONFIG))
     pixelpotion.status.clear()
-    pixelpotion.status.update({"last_action": "Waiting...", "processing": False})
+    pixelpotion.status.update(
+        {"last_action": "Waiting...", "processing": False, "capturing": False}
+    )
+    # The processing queue and its de-duplication set are module-level too.
+    while True:
+        try:
+            pixelpotion.work_queue.get_nowait()
+            pixelpotion.work_queue.task_done()
+        except queue.Empty:
+            break
+    pixelpotion._queued_names.clear()
 
     ai_provider._cached_client = None
     ai_provider._cached_api_key = ""
@@ -143,9 +181,41 @@ def isolated_state(tmp_path, monkeypatch):
     )
 
 
+CSRF_TEST_TOKEN = "Zq3vH8kP1tN6xW0rB4mC7yL2sD9fJ5aE-uGiKoTn_Rc"
+
+
+class CsrfFlaskClient(FlaskClient):
+    """Test client that sends the session's CSRF token header on every request.
+
+    Lets route tests focus on route behavior; CSRF enforcement itself is
+    covered by dedicated tests that use a plain client.
+    """
+
+    def open(self, *args, **kwargs):
+        headers = dict(kwargs.pop("headers", None) or {})
+        headers.setdefault("X-CSRF-Token", CSRF_TEST_TOKEN)
+        kwargs["headers"] = headers
+        return super().open(*args, **kwargs)
+
+
+def seed_csrf_session(test_client, token=CSRF_TEST_TOKEN):
+    """Store a known CSRF token in the client's session cookie."""
+    with test_client.session_transaction() as session:
+        session["_csrf_token"] = token
+    return test_client
+
+
 @pytest.fixture
-def client():
-    """Flask test client for route-level tests."""
+def client(monkeypatch):
+    """Flask test client for route-level tests, pre-authorized for CSRF."""
+    pixelpotion.app.config["TESTING"] = True
+    monkeypatch.setattr(pixelpotion.app, "test_client_class", CsrfFlaskClient)
+    return seed_csrf_session(pixelpotion.app.test_client())
+
+
+@pytest.fixture
+def plain_client():
+    """Flask test client that sends no CSRF token unless a test adds one."""
     pixelpotion.app.config["TESTING"] = True
     return pixelpotion.app.test_client()
 

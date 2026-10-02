@@ -71,6 +71,55 @@ class TestCapturePhoto:
         assert pixelpotion.capture_photo() is None
 
 
+    @pytest.mark.parametrize("failing_step", ["configure", "start", "capture_file"])
+    def test_camera_is_released_when_capture_fails_midway(
+        self, fake_picamera2, failing_step
+    ):
+        # Arrange
+        camera = fake_picamera2.return_value
+        getattr(camera, failing_step).side_effect = RuntimeError(
+            "Failed to queue buffer: Device or resource busy"
+        )
+
+        # Act
+        result = pixelpotion.capture_photo()
+
+        # Assert — the handle is released so the next press can use the camera.
+        assert result is None
+        camera.stop.assert_called_once()
+        camera.close.assert_called_once()
+
+    def test_camera_is_closed_even_when_stop_fails(self, fake_picamera2):
+        # Arrange
+        camera = fake_picamera2.return_value
+        camera.capture_file.side_effect = RuntimeError("Camera frontend has timed out!")
+        camera.stop.side_effect = RuntimeError("Camera was not started")
+
+        # Act
+        result = pixelpotion.capture_photo()
+
+        # Assert
+        assert result is None
+        camera.close.assert_called_once()
+
+    def test_next_capture_works_after_a_failed_one(self, fake_picamera2):
+        # Arrange — first capture times out, second one succeeds.
+        camera = fake_picamera2.return_value
+        camera.capture_file.side_effect = [
+            RuntimeError("Camera frontend has timed out!"),
+            None,
+        ]
+
+        # Act
+        first = pixelpotion.capture_photo()
+        second = pixelpotion.capture_photo()
+
+        # Assert
+        assert first is None
+        assert second is not None
+        assert camera.close.call_count == 2
+
+
 class TestCameraModuleProfiles:
     def test_imx708_applies_fixed_white_balance_gains(self, fake_picamera2):
         # Arrange — IMX708 needs fixed AWB gains to avoid a reddish tint.

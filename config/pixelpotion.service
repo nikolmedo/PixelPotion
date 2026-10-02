@@ -5,12 +5,23 @@ Wants=network.target
 
 [Service]
 Type=simple
-User=root
+# Run unprivileged. Camera (video), button (gpio) and wpa_supplicant control
+# (netdev) access come from the supplementary groups; network management goes
+# through the exact commands whitelisted in /etc/sudoers.d/pixelpotion.
+User=pi
+Group=pi
+SupplementaryGroups=video gpio netdev
 WorkingDirectory=/home/pi/pixelpotion
 ExecStart=/home/pi/pixelpotion/venv/bin/python3 /home/pi/pixelpotion/app.py
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+PrivateTmp=yes
+# NoNewPrivileges= and ProtectSystem= are deliberately NOT set: sudo is a
+# setuid binary, which NoNewPrivileges blocks, and the whitelisted commands
+# must write /etc/wpa_supplicant and /etc/dhcpcd.conf, which ProtectSystem
+# would make read-only. ProtectHome= is also off because the app lives in
+# /home/pi. Revisit all three after the NetworkManager migration.
 
 [Install]
 WantedBy=multi-user.target

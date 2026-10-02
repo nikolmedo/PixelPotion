@@ -7,7 +7,7 @@ import pytest
 from PIL import Image
 
 import ai_provider
-from constants import GEMINI_MODELS, MAX_RETRIES
+from constants import GEMINI_MODELS, MAX_RETRIES, MAX_RETRY_DELAY_SECONDS
 from conftest import make_gemini_response, make_jpeg_bytes
 
 GEMINI_API_KEY = "AIzaSyDk3v9XbT7eW2qLpZ8mNc4RfYhUj6sQwE0"
@@ -100,20 +100,33 @@ class TestTryGenerateGemini:
         # Assert
         assert result == generated
 
-    def test_returns_none_when_response_has_no_candidates(self, fake_genai):
+    def test_response_without_candidates_is_a_safety_block(self, fake_genai):
         # Arrange
         response = MagicMock()
         response.candidates = []
+        response.prompt_feedback = None
         client = MagicMock()
         client.models.generate_content.return_value = response
 
-        # Act
-        result = ai_provider._try_generate_gemini(
-            client, "gemini-3.1-flash-image", make_jpeg_bytes(), PIXAR_PROMPT
-        )
+        # Act / Assert
+        with pytest.raises(ai_provider.SafetyBlocked):
+            ai_provider._try_generate_gemini(
+                client, "gemini-3.1-flash-image", make_jpeg_bytes(), PIXAR_PROMPT
+            )
 
-        # Assert
-        assert result is None
+    def test_candidate_without_content_is_a_safety_block(self, fake_genai):
+        # Arrange — used to crash with AttributeError on `.parts`.
+        response = make_gemini_response(make_jpeg_bytes())
+        response.candidates[0].content = None
+        response.candidates[0].finish_reason = "IMAGE_SAFETY"
+        client = MagicMock()
+        client.models.generate_content.return_value = response
+
+        # Act / Assert
+        with pytest.raises(ai_provider.SafetyBlocked):
+            ai_provider._try_generate_gemini(
+                client, "gemini-3.1-flash-image", make_jpeg_bytes(), PIXAR_PROMPT
+            )
 
     def test_returns_none_when_no_part_carries_inline_data(self, fake_genai):
         # Arrange — model answered with text only, no generated image.
@@ -192,11 +205,9 @@ class TestRetryAndFallback:
     def test_retries_same_model_when_no_image_is_returned(
         self, fake_genai, source_photo
     ):
-        # Arrange — empty answer first, valid image on the second attempt.
-        empty_response = MagicMock()
-        empty_response.candidates = []
+        # Arrange — text-only answer first, valid image on the second attempt.
         fake_genai.client.models.generate_content.side_effect = [
-            empty_response,
+            make_gemini_response(None),
             make_gemini_response(make_jpeg_bytes()),
         ]
 
@@ -206,3 +217,251 @@ class TestRetryAndFallback:
         # Assert
         assert result is not None
         assert fake_genai.client.models.generate_content.call_count == 2
+
+
+class FakeAPIError(Exception):
+    """Shaped like google.genai.errors.APIError: numeric `code` + message."""
+
+    def __init__(self, code, message, details=None, response=None):
+        super().__init__(f"{code} {message}")
+        self.code = code
+        self.details = details
+        self.response = response
+
+
+def generate_calls(fake_genai):
+    return fake_genai.client.models.generate_content.call_count
+
+
+class TestErrorClassification:
+    @pytest.mark.parametrize("code", [401, 403])
+    def test_rejected_api_key_stops_immediately(self, fake_genai, source_photo, code):
+        # Arrange
+        fake_genai.client.models.generate_content.side_effect = FakeAPIError(
+            code, "PERMISSION_DENIED. API key not valid. Please pass a valid API key."
+        )
+
+        # Act
+        result = ai_provider.process_image_result(
+            source_photo, PIXAR_PROMPT, GEMINI_API_KEY
+        )
+
+        # Assert — one call, no retries, no other model.
+        assert result.ok is False
+        assert result.permanent is True
+        assert str(code) in result.reason
+        assert generate_calls(fake_genai) == 1
+
+    @pytest.mark.parametrize("code", [400, 404])
+    def test_rejected_request_tries_each_model_once_without_retries(
+        self, fake_genai, source_photo, code
+    ):
+        # Arrange
+        fake_genai.client.models.generate_content.side_effect = FakeAPIError(
+            code, "INVALID_ARGUMENT. Unable to process input image."
+        )
+
+        # Act
+        result = ai_provider.process_image_result(
+            source_photo, PIXAR_PROMPT, GEMINI_API_KEY
+        )
+
+        # Assert
+        assert result.permanent is True
+        assert generate_calls(fake_genai) == len(GEMINI_MODELS)
+
+    def test_rejected_request_falls_back_to_a_model_that_works(
+        self, fake_genai, source_photo
+    ):
+        # Arrange — first model retired (404), second one answers.
+        fake_genai.client.models.generate_content.side_effect = [
+            FakeAPIError(404, "NOT_FOUND. models/gemini-3.1-flash-image is not found."),
+            make_gemini_response(make_jpeg_bytes()),
+        ]
+
+        # Act
+        result = ai_provider.process_image_result(
+            source_photo, PIXAR_PROMPT, GEMINI_API_KEY
+        )
+
+        # Assert
+        assert result.ok is True
+        assert generate_calls(fake_genai) == 2
+
+    @pytest.mark.parametrize("code", [429, 500, 503])
+    def test_transient_errors_are_retried_and_not_permanent(
+        self, fake_genai, source_photo, code
+    ):
+        # Arrange
+        fake_genai.client.models.generate_content.side_effect = FakeAPIError(
+            code, "UNAVAILABLE. The model is overloaded."
+        )
+
+        # Act
+        result = ai_provider.process_image_result(
+            source_photo, PIXAR_PROMPT, GEMINI_API_KEY
+        )
+
+        # Assert
+        assert result.permanent is False
+        assert generate_calls(fake_genai) == MAX_RETRIES * len(GEMINI_MODELS)
+
+    def test_status_is_read_from_message_text_when_no_code_attribute(self):
+        # Arrange
+        error = RuntimeError("403 PERMISSION_DENIED. Your API key was reported as leaked.")
+
+        # Act / Assert
+        assert ai_provider.error_status_code(error) == 403
+
+    def test_numbers_inside_network_errors_are_not_mistaken_for_a_status(self):
+        # Arrange
+        error = ConnectionError(
+            "HTTPSConnectionPool(host='generativelanguage.googleapis.com', port=443): "
+            "Max retries exceeded"
+        )
+
+        # Act / Assert
+        assert ai_provider.error_status_code(error) is None
+
+    def test_safety_block_fails_permanently_without_retries(
+        self, fake_genai, source_photo
+    ):
+        # Arrange
+        response = make_gemini_response(None)
+        response.candidates = []
+        response.prompt_feedback = MagicMock(block_reason="SAFETY")
+        fake_genai.client.models.generate_content.return_value = response
+
+        # Act
+        result = ai_provider.process_image_result(
+            source_photo, PIXAR_PROMPT, GEMINI_API_KEY
+        )
+
+        # Assert
+        assert result.permanent is True
+        assert result.reason == "blocked by safety filters"
+        assert generate_calls(fake_genai) == 1
+
+    @pytest.mark.parametrize(
+        "unspecified", ["BLOCKED_REASON_UNSPECIFIED", "BLOCK_REASON_UNSPECIFIED"]
+    )
+    def test_unspecified_block_reason_is_not_a_safety_block(
+        self, fake_genai, source_photo, unspecified
+    ):
+        # Arrange — a normal answer that carries prompt_feedback with the zero value.
+        response = make_gemini_response(make_jpeg_bytes())
+        response.prompt_feedback = MagicMock(block_reason=unspecified)
+        fake_genai.client.models.generate_content.return_value = response
+
+        # Act
+        result = ai_provider.process_image_result(
+            source_photo, PIXAR_PROMPT, GEMINI_API_KEY
+        )
+
+        # Assert
+        assert result.ok is True
+
+    def test_safety_finish_reason_fails_permanently(self, fake_genai, source_photo):
+        # Arrange
+        response = make_gemini_response(None)
+        response.candidates[0].finish_reason = "PROHIBITED_CONTENT"
+        fake_genai.client.models.generate_content.return_value = response
+
+        # Act
+        result = ai_provider.process_image_result(
+            source_photo, PIXAR_PROMPT, GEMINI_API_KEY
+        )
+
+        # Assert
+        assert result.permanent is True
+        assert generate_calls(fake_genai) == 1
+
+    def test_process_image_keeps_returning_none_on_failure(
+        self, fake_genai, source_photo
+    ):
+        # Arrange
+        fake_genai.client.models.generate_content.side_effect = FakeAPIError(
+            401, "UNAUTHENTICATED. API key not valid."
+        )
+
+        # Act / Assert — compatibility wrapper for str | None callers.
+        assert ai_provider.process_image(source_photo, PIXAR_PROMPT, GEMINI_API_KEY) is None
+
+
+class TestRetryDelay:
+    @pytest.fixture
+    def sleep(self, monkeypatch):
+        sleep = MagicMock()
+        monkeypatch.setattr(ai_provider.time, "sleep", sleep)
+        return sleep
+
+    def test_honors_retry_after_header(self, fake_genai, source_photo, sleep):
+        # Arrange
+        rate_limited = FakeAPIError(
+            429, "RESOURCE_EXHAUSTED. Quota exceeded.",
+            response=MagicMock(headers={"Retry-After": "17"}),
+        )
+        fake_genai.client.models.generate_content.side_effect = [
+            rate_limited, make_gemini_response(make_jpeg_bytes()),
+        ]
+
+        # Act
+        result = ai_provider.process_image_result(
+            source_photo, PIXAR_PROMPT, GEMINI_API_KEY
+        )
+
+        # Assert
+        assert result.ok is True
+        sleep.assert_called_once_with(17.0)
+
+    def test_honors_retry_delay_from_error_details(
+        self, fake_genai, source_photo, sleep
+    ):
+        # Arrange — Gemini puts RetryInfo in the error details.
+        rate_limited = FakeAPIError(
+            429, "RESOURCE_EXHAUSTED. Quota exceeded.",
+            details={"error": {"details": [{
+                "@type": "type.googleapis.com/google.rpc.RetryInfo",
+                "retryDelay": "35s",
+            }]}},
+        )
+        fake_genai.client.models.generate_content.side_effect = [
+            rate_limited, make_gemini_response(make_jpeg_bytes()),
+        ]
+
+        # Act
+        ai_provider.process_image_result(source_photo, PIXAR_PROMPT, GEMINI_API_KEY)
+
+        # Assert
+        sleep.assert_called_once_with(35.0)
+
+    def test_caps_a_very_long_retry_delay(self, fake_genai, source_photo, sleep):
+        # Arrange
+        rate_limited = FakeAPIError(
+            429, "RESOURCE_EXHAUSTED. Quota exceeded.",
+            response=MagicMock(headers={"Retry-After": "3600"}),
+        )
+        fake_genai.client.models.generate_content.side_effect = [
+            rate_limited, make_gemini_response(make_jpeg_bytes()),
+        ]
+
+        # Act
+        ai_provider.process_image_result(source_photo, PIXAR_PROMPT, GEMINI_API_KEY)
+
+        # Assert
+        sleep.assert_called_once_with(MAX_RETRY_DELAY_SECONDS)
+
+    def test_uses_exponential_backoff_without_a_hint(
+        self, fake_genai, source_photo, sleep
+    ):
+        # Arrange
+        fake_genai.client.models.generate_content.side_effect = [
+            FakeAPIError(503, "UNAVAILABLE. The model is overloaded."),
+            make_gemini_response(make_jpeg_bytes()),
+        ]
+
+        # Act
+        ai_provider.process_image_result(source_photo, PIXAR_PROMPT, GEMINI_API_KEY)
+
+        # Assert
+        sleep.assert_called_once_with(2)

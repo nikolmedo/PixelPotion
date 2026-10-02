@@ -1,0 +1,6 @@
+# Files executed or parsed on the Raspberry Pi must keep LF line endings, even
+# when the repository is checked out (or scp'd) from Windows.
+*.sh               text eol=lf
+config/*           text eol=lf
+deploy-files.txt   text eol=lf
+VERSION            text eol=lf

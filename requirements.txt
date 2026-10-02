@@ -1,7 +1,9 @@
+# Runtime dependencies, installed into /home/pi/pixelpotion/venv by install.sh.
+# picamera2 and RPi.GPIO are NOT pip-installed: they come from apt
+# (python3-picamera2, python3-rpi.gpio) and are visible inside the venv because
+# it is created with --system-site-packages.
 flask>=3.0
 requests>=2.31
-Pillow>=10.0
-genkit==0.6.0
-genkit-plugin-google-genai==0.6.0
-RPi.GPIO>=0.7
-picamera2>=0.3
+# 12.2.0 fixes CVE-2026-42309.
+Pillow>=12.2
+google-genai>=2,<3

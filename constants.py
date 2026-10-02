@@ -20,6 +20,10 @@ GEMINI_MODELS = [
 
 MAX_RETRIES = 3
 
+# Upper bound for one backoff sleep, even when the API asks for longer
+# (Retry-After / retryDelay): the worker must not stall for minutes.
+MAX_RETRY_DELAY_SECONDS = 60
+
 # Timeout in milliseconds for HttpOptions. google-genai SDK uses ms.
 GEMINI_TIMEOUT_MS = 120_000
 
@@ -37,5 +41,5 @@ PHOTOS_PROCESSED = BASE_DIR / "photos" / "processed"
 # ---------------------------------------------------------------------------
 _DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent / "default_config.json"
 
-with open(_DEFAULT_CONFIG_PATH) as _f:
+with open(_DEFAULT_CONFIG_PATH, encoding="utf-8") as _f:
     DEFAULT_CONFIG: dict = json.load(_f)

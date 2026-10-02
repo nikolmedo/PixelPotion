@@ -1,0 +1,28 @@
+# PixelPotion - sudo whitelist for the unprivileged service user.
+# Installed as /etc/sudoers.d/pixelpotion (mode 0440) by install.sh and
+# update.sh, after validation with `visudo -cf`.
+#
+# Every entry is an exact command line: full binary path and fixed arguments,
+# no wildcards. In sudoers a command listed without arguments would allow ANY
+# arguments, so never add one that way. Keep this list in sync with the
+# absolute paths at the top of the WiFi helpers in app.py
+# (tests/test_app_network.py checks that every sudo call app.py makes is here).
+#
+# Caveat: writing /etc/dhcpcd.conf through tee is still root-equivalent in
+# theory, because dhcpcd's `script` option runs an arbitrary program as root.
+# This whitelist narrows the attack surface compared to running the whole
+# service as root, but it does not eliminate it. The real fix is migrating
+# network management to NetworkManager (nmcli + polkit).
+
+Cmnd_Alias PIXELPOTION_NET = \
+    /usr/bin/systemctl stop hostapd, \
+    /usr/bin/systemctl stop dnsmasq, \
+    /usr/bin/systemctl start hostapd, \
+    /usr/bin/systemctl start dnsmasq, \
+    /usr/bin/systemctl restart dhcpcd, \
+    /usr/bin/tee /etc/wpa_supplicant/wpa_supplicant.conf, \
+    /usr/bin/tee /etc/dhcpcd.conf, \
+    /usr/sbin/wpa_cli -i wlan0 reconfigure, \
+    /usr/sbin/iwlist wlan0 scan
+
+pi ALL=(root) NOPASSWD: PIXELPOTION_NET

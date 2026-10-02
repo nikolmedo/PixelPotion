@@ -1,0 +1,20 @@
+# Runtime files deployed to /home/pi/pixelpotion by install.sh and update.sh.
+# One path per line, relative to the repository root. No globs: every new
+# runtime module, template or static file must be listed here (tests/test_deploy_manifest.py
+# checks this). config.json and photos/ are runtime state and never deployed.
+app.py
+ai_provider.py
+constants.py
+default_config.json
+requirements.txt
+VERSION
+update.sh
+templates/base.html
+templates/index.html
+templates/styles.html
+templates/gallery.html
+static/app.css
+static/app.js
+static/index.js
+static/styles.js
+static/gallery.js
