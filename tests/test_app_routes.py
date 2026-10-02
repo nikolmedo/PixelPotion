@@ -549,7 +549,7 @@ class TestGalleryActions:
 
         # Assert
         assert ("error", "Invalid file name.") in get_flashes(client)
-        fake_thread.assert_not_called()
+        assert pixelpotion.work_queue.empty()
         assert list(isolated_state.originals.iterdir()) == []
         assert list(isolated_state.pending.iterdir()) == []
 
@@ -562,7 +562,7 @@ class TestGalleryActions:
 
         # Assert
         assert ("error", "No file specified.") in get_flashes(client)
-        fake_thread.assert_not_called()
+        assert pixelpotion.work_queue.empty()
 
     def test_process_photo_requires_wifi(self, client, fake_thread, monkeypatch):
         # Arrange
@@ -575,7 +575,7 @@ class TestGalleryActions:
 
         # Assert
         assert ("error", "No WiFi connection.") in get_flashes(client)
-        fake_thread.assert_not_called()
+        assert pixelpotion.work_queue.empty()
 
     def test_process_photo_queues_the_photo_with_the_chosen_style(
         self, client, monkeypatch, isolated_state
@@ -902,7 +902,7 @@ class TestCsrfProtection:
         # Assert
         assert response.status_code == 400
         assert response.get_json()["ok"] is False
-        fake_thread.assert_not_called()
+        assert pixelpotion.work_queue.empty()
 
     def test_json_route_accepts_header_token(self, plain_client):
         # Arrange

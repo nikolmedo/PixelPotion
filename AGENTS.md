@@ -112,7 +112,8 @@ Don't break this.
   the stored value (WiFi: only when the SSID is unchanged; a new SSID with a blank
   password is saved as an open network).
 - **Secrets at rest stay private.** `config.json` is chmod 0600 on every save; the WiFi
-  PSK goes through a `mkstemp` (0600) file that is deleted right after `sudo cp`; logged
+  PSK is piped to `sudo tee` (never on a command line or in a temp file) and
+  `wpa_supplicant.conf` is kept 0600 by install.sh; logged
   Telegram exceptions have the bot token redacted (requests embeds the URL in errors).
 - **Unprivileged service + sudo whitelist.** `pixelpotion.service` runs as `pi`
   (groups `video gpio netdev`). Network management (`connect_wifi`, `start_ap_mode`,
