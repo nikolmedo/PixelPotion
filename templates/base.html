@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
 </head>
 <body data-page="{{ request.endpoint }}">
+    <a class="skip-link" href="#main">Skip to content</a>
     <header class="header">
         <h1>🧪 PixelPotion</h1>
         <p>{% block subtitle %}AI Style Camera{% endblock %}</p>
@@ -28,8 +29,8 @@
         {% endfor %}
     </nav>
 
-    <main class="container">
-        <div class="flash-region" id="flashRegion">
+    <main class="container" id="main" tabindex="-1">
+        <div class="flash-region" id="flashRegion" role="status" aria-live="polite">
             {% with messages = get_flashed_messages(with_categories=true) %}
             {% for category, message in messages %}
             <div class="flash {{ category }}">{{ message }}</div>
@@ -44,7 +45,7 @@
         <p>PixelPotion{% if app_version %} {{ app_version }}{% endif %}</p>
     </footer>
 
-    <div class="toast" id="toast"></div>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
     <script src="{{ url_for('static', filename='app.js') }}"></script>
     {% block scripts %}{% endblock %}

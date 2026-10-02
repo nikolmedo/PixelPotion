@@ -17,14 +17,27 @@
         PP.submitForm('/process_all', {style_id: selectedStyle()});
     }
 
-    const modal = document.getElementById('modal');
-    function openModal(src) {
-        document.getElementById('modalImg').src = src;
-        modal.classList.add('active');
+    // Native <dialog>: showModal() traps focus and Escape closes it; focus
+    // returns to the photo that opened it.
+    const preview = document.getElementById('preview');
+    const previewImg = document.getElementById('previewImg');
+    let opener = null;
+    function openPreview(button) {
+        const img = button.querySelector('img');
+        opener = button;
+        previewImg.src = img.src;
+        previewImg.alt = button.getAttribute('aria-label').replace(/^Preview /, '');
+        preview.showModal();
+        document.getElementById('previewClose').focus();
     }
-    function closeModal() {
-        modal.classList.remove('active');
-    }
+    preview.addEventListener('close', () => {
+        if (opener) opener.focus();
+    });
+    // A click on the backdrop lands on the dialog element itself.
+    preview.addEventListener('click', e => {
+        if (e.target === preview) preview.close();
+    });
+    document.getElementById('previewClose').addEventListener('click', () => preview.close());
 
     function photoBoxes() {
         return document.querySelectorAll('input[name="selected_photos"]');
@@ -42,8 +55,8 @@
     }
 
     photoBoxes().forEach(box => box.addEventListener('change', () => syncCard(box)));
-    document.querySelectorAll('.photo-img').forEach(img => {
-        img.addEventListener('click', () => openModal(img.src));
+    document.querySelectorAll('.photo-open').forEach(btn => {
+        btn.addEventListener('click', () => openPreview(btn));
     });
     document.querySelectorAll('.process-one').forEach(btn => {
         btn.addEventListener('click', () => processOne(btn.dataset.filename));
@@ -69,7 +82,4 @@
         const processAllBtn = document.getElementById('processAllBtn');
         if (processAllBtn) processAllBtn.addEventListener('click', processAll);
     }
-
-    modal.addEventListener('click', closeModal);
-    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 })();

@@ -13,7 +13,7 @@
     function selectStyle(id) {
         selectedStyle = id;
         document.querySelectorAll('.style-pill').forEach(p => {
-            p.classList.toggle('active', p.dataset.id === id);
+            p.setAttribute('aria-pressed', String(p.dataset.id === id));
         });
         // Persist for the GPIO button.
         PP.post('/set_active_style', {style_id: id})
@@ -76,15 +76,15 @@
 
     // SSIDs are broadcast by anyone nearby: only ever insert them as text.
     function showWifiMessage(list, text) {
-        const item = document.createElement('div');
-        item.className = 'wifi-item';
+        const item = document.createElement('p');
+        item.className = 'wifi-message';
         item.textContent = text;
         list.replaceChildren(item);
     }
 
     function scanWifi() {
         const list = document.getElementById('wifiList');
-        list.style.display = 'block';
+        list.hidden = false;
         showWifiMessage(list, 'Scanning...');
         fetch('/scan_wifi').then(r => r.json()).then(networks => {
             if (!networks.length) {
@@ -92,11 +92,15 @@
                 return;
             }
             const items = networks.map(ssid => {
-                const item = document.createElement('div');
+                const item = document.createElement('button');
+                item.type = 'button';
                 item.className = 'wifi-item';
                 item.textContent = ssid;
                 item.addEventListener('click', () => {
-                    document.getElementById('wifiSsid').value = ssid;
+                    const field = document.getElementById('wifiSsid');
+                    field.value = ssid;
+                    field.dispatchEvent(new Event('input'));
+                    document.getElementById('wifiPass').focus();
                 });
                 return item;
             });

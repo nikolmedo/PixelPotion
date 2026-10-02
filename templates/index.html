@@ -66,7 +66,7 @@
                     Telegram
                 </div>
             </div>
-            <p class="status-text {{ 'processing' if status.processing else '' }}" id="statusText">
+            <p class="status-text {{ 'processing' if status.processing else '' }}" id="statusText" role="status" aria-live="polite">
                 {{ status.last_action }}
             </p>
         </div>
@@ -76,15 +76,12 @@
             <h2><span class="icon">📷</span> Capture Photo</h2>
 
             {% if styles|length > 0 %}
-            <div class="form-group" style="margin-bottom:8px;">
-                <label>Select style</label>
-            </div>
-            <div class="style-selector" id="stylePills" data-active-style="{{ active_style_id }}">
+            <p class="field-label" id="styleLabel">Style</p>
+            <div class="style-selector" id="stylePills" role="group" aria-labelledby="styleLabel"
+                 data-active-style="{{ active_style_id }}">
                 {% for style in styles %}
-                <div class="style-pill {{ 'active' if style.id == active_style_id else '' }}"
-                     data-id="{{ style.id }}">
-                    {{ style.name }}
-                </div>
+                <button type="button" class="style-pill" data-id="{{ style.id }}"
+                        aria-pressed="{{ 'true' if style.id == active_style_id else 'false' }}">{{ style.name }}</button>
                 {% endfor %}
             </div>
             {% else %}
@@ -94,7 +91,8 @@
             {% endif %}
 
             <div class="capture-section">
-                <button type="button" class="capture-btn" id="captureBtn">📸</button>
+                <button type="button" class="capture-btn" id="captureBtn" aria-label="Take a photo"
+                        aria-describedby="captureHint">{{ icon("camera", 36) }}</button>
                 <p class="status-text" id="captureHint">Press to capture or use the physical button</p>
             </div>
         </div>
@@ -159,7 +157,7 @@
         <div class="card" id="wifi">
             <h2><span class="icon">📶</span> WiFi</h2>
             <button type="button" class="btn btn-primary" style="margin-bottom:12px;" id="scanWifiBtn">Find networks</button>
-            <div class="wifi-list" id="wifiList" style="display:none;"></div>
+            <div class="wifi-list" id="wifiList" aria-live="polite" hidden></div>
             <form method="post" action="/save_wifi" id="wifiForm" data-ap-name="{{ ap_name }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="form-group">

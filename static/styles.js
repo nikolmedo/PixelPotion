@@ -9,17 +9,21 @@
         const view = card.querySelector('.style-view');
         const edit = card.querySelector('.style-edit');
 
-        card.querySelector('.style-header').addEventListener('click', () => {
-            body.classList.toggle('open');
-            card.querySelector('.toggle-icon').classList.toggle('open');
+        const header = card.querySelector('.style-header');
+        header.addEventListener('click', () => {
+            const open = header.getAttribute('aria-expanded') !== 'true';
+            header.setAttribute('aria-expanded', String(open));
+            body.hidden = !open;
         });
         card.querySelector('.edit-style').addEventListener('click', () => {
             view.hidden = true;
             edit.hidden = false;
+            edit.querySelector('input[name="style_name"]').focus();
         });
         card.querySelector('.cancel-edit').addEventListener('click', () => {
             view.hidden = false;
             edit.hidden = true;
+            card.querySelector('.edit-style').focus();
         });
 
         const activate = card.querySelector('.activate-style');

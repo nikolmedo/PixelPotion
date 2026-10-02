@@ -253,3 +253,178 @@ class TestSetupFlow:
         assert attrs["autocapitalize"] == "none"
         assert attrs["spellcheck"] == "false"
         assert attrs["autocomplete"] in ("off", "new-password")
+
+
+class A11yAudit(HTMLParser):
+    """Form controls, their labels, and the visible text of every button."""
+
+    def __init__(self):
+        super().__init__()
+        self.controls = []        # attrs of input/select/textarea
+        self.label_for = set()    # ids referenced by <label for>
+        self.label_depth = 0
+        self.wrapped = []         # controls nested inside a <label>
+        self.buttons = []         # (attrs, visible text)
+        self._button = None
+        self.elements = []        # (tag, attrs) of every element
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        self.elements.append((tag, attrs))
+        if tag == "label":
+            self.label_depth += 1
+            if attrs.get("for"):
+                self.label_for.add(attrs["for"])
+        elif tag in ("input", "select", "textarea") and attrs.get("type") != "hidden":
+            self.controls.append(attrs)
+            if self.label_depth:
+                self.wrapped.append(attrs)
+        elif tag == "button":
+            self._button = [attrs, ""]
+            self.buttons.append(self._button)
+
+    def handle_endtag(self, tag):
+        if tag == "label":
+            self.label_depth -= 1
+        elif tag == "button":
+            self._button = None
+
+    def handle_data(self, data):
+        if self._button is not None:
+            self._button[1] += data.strip()
+
+
+def a11y(client, page) -> A11yAudit:
+    parser = A11yAudit()
+    parser.feed(client.get(page).get_data(as_text=True))
+    return parser
+
+
+class TestAccessibility:
+    @pytest.mark.parametrize("page", PAGES)
+    def test_every_form_control_has_an_accessible_name(self, client, full_pages, page):
+        # Act
+        parsed = a11y(client, page)
+
+        # Assert
+        assert parsed.controls
+        for attrs in parsed.controls:
+            named = (attrs.get("id") in parsed.label_for or attrs.get("aria-label"))
+            assert named, attrs
+
+    @pytest.mark.parametrize("page", PAGES)
+    def test_icon_only_buttons_have_an_aria_label(self, client, full_pages, page):
+        # Act
+        parsed = a11y(client, page)
+
+        # Assert
+        for attrs, text in parsed.buttons:
+            if not text:
+                assert attrs.get("aria-label"), attrs
+
+    @pytest.mark.parametrize("page", PAGES)
+    def test_status_messages_are_announced(self, client, page):
+        # Act
+        parsed = a11y(client, page)
+        live = {a.get("id") for _, a in parsed.elements if a.get("aria-live") == "polite"}
+
+        # Assert
+        assert {"flashRegion", "toast"} <= live
+
+    def test_capture_status_line_is_announced(self, client):
+        # Act
+        parsed = a11y(client, "/")
+        (status,) = [a for _, a in parsed.elements if a.get("id") == "statusText"]
+
+        # Assert
+        assert status["aria-live"] == "polite"
+
+    def test_style_choices_are_toggle_buttons(self, client):
+        # Act
+        parsed = a11y(client, "/")
+        pills = [a for a, _ in parsed.buttons if "style-pill" in a.get("class", "")]
+
+        # Assert — exactly the active style is pressed.
+        assert [p["data-id"] for p in pills] == ["pixar", "anime", "watercolor"]
+        assert [p["aria-pressed"] for p in pills] == ["true", "false", "false"]
+        assert not [a for t, a in parsed.elements
+                    if t == "div" and "style-pill" in a.get("class", "")]
+
+    def test_style_cards_expand_from_a_button_that_reports_its_state(self, client):
+        # Act
+        parsed = a11y(client, "/styles")
+        headers = [a for a, _ in parsed.buttons if "style-header" in a.get("class", "")]
+        ids = {a.get("id") for _, a in parsed.elements}
+
+        # Assert
+        assert len(headers) == 3
+        for header in headers:
+            assert header["aria-expanded"] == "false"
+            assert header["aria-controls"] in ids
+
+    def test_gallery_preview_is_a_dialog_opened_by_buttons(
+        self, client, full_pages
+    ):
+        # Act
+        parsed = a11y(client, "/gallery")
+
+        # Assert
+        assert [t for t, _ in parsed.elements].count("dialog") == 1
+        openers = [a for a, _ in parsed.buttons if "photo-open" in a.get("class", "")]
+        assert [o["aria-label"] for o in openers] == ["Preview photo_20260609_201500.jpg"]
+
+    def test_focus_and_touch_target_rules_exist(self):
+        # Arrange
+        css = (STATIC_DIR / "app.css").read_text(encoding="utf-8")
+
+        # Act / Assert — computed layout is checked in a real browser.
+        assert ":focus-visible" in css
+        assert re.search(r"--tap:\s*44px", css)
+        for selector in (".btn {", ".style-pill {", ".nav a {", ".wifi-item {", ".style-header {"):
+            rule = css[css.index(selector):].split("}", 1)[0]
+            assert "min-height: var(--tap)" in rule, selector
+
+
+def css_tokens() -> dict:
+    """Hex colour tokens declared in the first :root block of app.css."""
+    css = (STATIC_DIR / "app.css").read_text(encoding="utf-8")
+    root = re.search(r":root\s*\{(.*?)\}", css, re.S).group(1)
+    return dict(re.findall(r"--([\w-]+):\s*(#[0-9a-fA-F]{6})\b", root))
+
+
+def contrast_ratio(foreground: str, background: str) -> float:
+    def luminance(hex_colour):
+        channels = [int(hex_colour[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+        linear = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+                  for c in channels]
+        return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+    light, dark = sorted((luminance(foreground), luminance(background)), reverse=True)
+    return (light + 0.05) / (dark + 0.05)
+
+
+# Every text colour paired with each background it is drawn on.
+TEXT_PAIRS = [
+    ("text", "bg"), ("text", "surface"), ("text", "surface2"),
+    ("text-dim", "bg"), ("text-dim", "surface"), ("text-dim", "surface2"),
+    ("accent2", "surface"),
+    ("on-accent", "accent"), ("on-success", "green"),
+    ("on-danger", "red"), ("on-warning", "yellow"),
+]
+
+
+class TestColourContrast:
+    @pytest.mark.parametrize("foreground, background", TEXT_PAIRS)
+    def test_text_meets_wcag_aa(self, foreground, background):
+        # Arrange
+        tokens = css_tokens()
+
+        # Act
+        ratio = contrast_ratio(tokens[foreground], tokens[background])
+
+        # Assert
+        assert ratio >= 4.5, f"--{foreground} on --{background}: {ratio:.2f}"
+
+    def test_contrast_maths_matches_the_wcag_reference(self):
+        # Act / Assert — black on white is the 21:1 maximum.
+        assert contrast_ratio("#000000", "#ffffff") == pytest.approx(21.0)

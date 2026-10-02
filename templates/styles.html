@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% block title %}Styles{% endblock %}
 {% block subtitle %}Style Management{% endblock %}
 
@@ -9,13 +10,13 @@
             <form method="post" action="/add_style">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="form-group">
-                    <label>Style name</label>
-                    <input type="text" name="style_name" placeholder="e.g. Comic Book, Oil Painting, Cyberpunk..." required>
+                    <label for="newStyleName">Style name</label>
+                    <input type="text" name="style_name" id="newStyleName" placeholder="e.g. Comic Book, Oil Painting, Cyberpunk..." required>
                 </div>
                 <div class="form-group">
-                    <label>Prompt for Gemini</label>
-                    <textarea name="style_prompt" placeholder="TASK: Transform this photograph into...&#10;&#10;Describe the style you want to apply. Be specific about:&#10;- Visual style&#10;- How to handle people (keep likeness)&#10;- How to handle the background&#10;- Composition rules" required></textarea>
-                    <p class="hint">
+                    <label for="newStylePrompt">Prompt for Gemini</label>
+                    <textarea name="style_prompt" id="newStylePrompt" aria-describedby="newStyleHint" placeholder="TASK: Transform this photograph into...&#10;&#10;Describe the style you want to apply. Be specific about:&#10;- Visual style&#10;- How to handle people (keep likeness)&#10;- How to handle the background&#10;- Composition rules" required></textarea>
+                    <p class="hint" id="newStyleHint">
                         Tip: Always start with "TASK: Transform this photograph into..." and
                         end with "OUTPUT: Generate the transformed image now." for best results.
                     </p>
@@ -38,20 +39,19 @@
 
             {% for style in styles %}
             <div class="style-card {{ 'is-active' if style.id == active_style_id else '' }}" data-style-id="{{ style.id }}">
-                <div class="style-header">
-                    <div class="name">
-                        {{ style.name }}
-                        {% if style.id == active_style_id %}
-                        <span class="badge">ACTIVE</span>
-                        {% endif %}
-                    </div>
-                    <span class="toggle-icon">▼</span>
-                </div>
-                <div class="style-body">
+                <h3 class="style-title">
+                    <button type="button" class="style-header" aria-expanded="false"
+                            aria-controls="style-body-{{ loop.index }}">
+                        <span class="name">{{ style.name }}</span>
+                        {% if style.id == active_style_id %}<span class="badge">Active</span>{% endif %}
+                        <span class="toggle-icon">{{ icon("chevron") }}</span>
+                    </button>
+                </h3>
+                <div class="style-body" id="style-body-{{ loop.index }}" hidden>
                     <!-- View mode -->
                     <div class="style-view">
                         <div class="form-group" style="margin-bottom:8px;">
-                            <label>Prompt</label>
+                            <p class="field-label">Prompt</p>
                             <div class="prompt-preview">{{ style.prompt }}</div>
                         </div>
                         <div class="style-actions">
@@ -72,12 +72,12 @@
                         <form method="post" action="/edit_style/{{ style.id }}">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <div class="form-group">
-                                <label>Name</label>
-                                <input type="text" name="style_name" value="{{ style.name }}" required>
+                                <label for="edit-name-{{ loop.index }}">Name</label>
+                                <input type="text" name="style_name" id="edit-name-{{ loop.index }}" value="{{ style.name }}" required>
                             </div>
                             <div class="form-group">
-                                <label>Prompt</label>
-                                <textarea name="style_prompt" required style="min-height:180px;">{{ style.prompt }}</textarea>
+                                <label for="edit-prompt-{{ loop.index }}">Prompt</label>
+                                <textarea name="style_prompt" id="edit-prompt-{{ loop.index }}" required style="min-height:180px;">{{ style.prompt }}</textarea>
                             </div>
                             <div class="style-actions">
                                 <button type="submit" class="btn btn-success btn-sm">💾 Save</button>
