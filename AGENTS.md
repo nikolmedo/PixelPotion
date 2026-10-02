@@ -30,6 +30,8 @@ static/app.js           # Shared helpers (window.PP): CSRF-aware post(), submitF
 static/{index,styles,gallery}.js  # One small script per page
 config/                 # hostapd/dnsmasq configs, systemd unit, sudoers whitelist — deployed by install.sh
 install.sh / update.sh  # Pi provisioning and GitHub-release auto-update (not unit-tested)
+uninstall.sh            # Removes a v3.x install (deployed); keeps photos/config unless --purge
+uninstall-legacy.sh     # Standalone uninstaller for v2.0.2 and earlier (repo only, not deployed)
 deploy-files.txt        # Runtime files both scripts copy to the Pi — single source of truth
 docs/screenshots/       # Portal screenshots used by the README (from a stubbed local demo)
 .github/workflows/ci.yml  # pytest (3.11, 3.13), shellcheck, visudo
@@ -193,16 +195,18 @@ Don't break this.
 ```bash
 python -m venv .venv
 .venv/Scripts/python -m pip install -r requirements-dev.txt   # Windows
-.venv/Scripts/python -m pytest                                # 333 tests (7 POSIX/bash-only, skipped on Windows), ~5s
+.venv/Scripts/python -m pytest                                # 372 tests (12 POSIX/bash-only, skipped on Windows), ~5s
 ```
 
 - Suite layout mirrors the layers: `test_constants`, `test_ai_provider`, `test_app_config`,
   `test_app_network`, `test_app_camera`, `test_app_telegram`, `test_app_pipeline`,
   `test_app_routes` (Flask test client), plus `test_deploy_manifest` (static checks of
-  what install.sh/update.sh deploy) and `test_portal_ui` (markup contracts, WCAG contrast of
-  the CSS color tokens).
+  what install.sh/update.sh deploy), `test_uninstall_scripts` (uninstall/install
+  consistency, bash-run block removal) and `test_portal_ui` (markup contracts, WCAG
+  contrast of the CSS color tokens).
 - CI (`.github/workflows/ci.yml`) runs the suite on Python 3.11 and 3.13, `shellcheck
-  -S warning` on both scripts, and `visudo -cf` on the sudoers file.
+  -S warning` on the install, update and uninstall scripts, and `visudo -cf` on the
+  sudoers file.
 - `tests/conftest.py` is the linchpin: it stubs `logging.FileHandler` before importing
   `app`, and its autouse `isolated_state` fixture redirects all paths to `tmp_path` and
   resets every global (config, status, processing queue, cached Gemini client)
@@ -235,6 +239,10 @@ python -m venv .venv
 - **Adding a runtime file** (module, template, static file, data file): list it in `deploy-files.txt`,
   or it will not reach the Pi. `tests/test_deploy_manifest.py` guards local imports,
   templates, requirements, the service user and the sudoers file.
+- **Keep `uninstall.sh` in sync with `install.sh`.** When install.sh starts writing a new
+  `/etc` or `/boot` path, teach uninstall.sh to undo it: `tests/test_uninstall_scripts.py`
+  fails until every such path appears there. `uninstall-legacy.sh` is frozen against what
+  v2.0.2 wrote and keeps its own copy of the block-removal helpers (a test checks they match).
 - Shell scripts and `config/*` must keep LF endings (`.gitattributes` enforces it).
 - Live logs on the device: `sudo journalctl -u pixelpotion -f`.
 - The web portal binds `0.0.0.0:8080`; AP mode answers at `192.168.4.1`.
