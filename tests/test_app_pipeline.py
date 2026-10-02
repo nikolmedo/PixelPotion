@@ -1,4 +1,4 @@
-"""Tests for app.py pipeline logic — AI gating, pending queue, full_pipeline."""
+"""Tests for app.py pipeline logic — AI gating, pending queue, capture, worker."""
 
 from unittest.mock import MagicMock
 
@@ -76,13 +76,32 @@ class TestPendingQueue:
         pending_copy = isolated_state.pending / SAMPLE_PHOTO_NAME
 
         # Act — called twice, as happens when a photo is retried.
-        pixelpotion.ensure_in_pending(str(sample_photo))
-        pixelpotion.ensure_in_pending(str(sample_photo))
+        first = pixelpotion.ensure_in_pending(str(sample_photo))
+        second = pixelpotion.ensure_in_pending(str(sample_photo))
 
         # Assert
+        assert first is True and second is True
         assert pending_copy.exists()
         assert pending_copy.read_bytes() == sample_photo.read_bytes()
-        assert len(list(isolated_state.pending.glob("*.jpg"))) == 1
+        assert sorted(p.name for p in isolated_state.pending.iterdir()) == [
+            SAMPLE_PHOTO_NAME
+        ]
+
+    def test_ensure_in_pending_reports_failure_and_leaves_no_partial_file(
+        self, sample_photo, isolated_state, monkeypatch
+    ):
+        # Arrange — the SD card fails while the copy is renamed into place.
+        def disk_error(src, dst):
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(pixelpotion.os, "replace", disk_error)
+
+        # Act
+        result = pixelpotion.ensure_in_pending(str(sample_photo))
+
+        # Assert
+        assert result is False
+        assert list(isolated_state.pending.iterdir()) == []
 
     def test_remove_from_pending_tolerates_missing_file(self, isolated_state):
         # Arrange — photo was already delivered and removed by another path.
@@ -91,13 +110,121 @@ class TestPendingQueue:
         # Act / Assert — must not raise.
         pixelpotion.remove_from_pending(str(ghost))
 
+    def test_enqueue_skips_a_photo_that_is_already_queued(self):
+        # Act
+        first = pixelpotion.enqueue_pending(SAMPLE_PHOTO_NAME, "pixar")
+        second = pixelpotion.enqueue_pending(SAMPLE_PHOTO_NAME, "anime")
 
-class TestFullPipeline:
-    def test_happy_path_delivers_and_clears_pending(
+        # Assert
+        assert (first, second) == (True, False)
+        assert pixelpotion.work_queue.qsize() == 1
+
+    def test_photo_can_be_queued_again_after_it_was_processed(
+        self, pipeline_mocks, isolated_state
+    ):
+        # Arrange — processing fails, so the photo stays pending.
+        (isolated_state.pending / SAMPLE_PHOTO_NAME).write_bytes(make_jpeg_bytes())
+        pipeline_mocks.process_with_ai.return_value = None
+        pixelpotion.enqueue_pending(SAMPLE_PHOTO_NAME)
+        pixelpotion.process_next(block=False)
+
+        # Act
+        requeued = pixelpotion.enqueue_pending(SAMPLE_PHOTO_NAME)
+
+        # Assert
+        assert requeued is True
+
+    def test_process_next_returns_false_when_queue_is_empty(self):
+        # Act / Assert
+        assert pixelpotion.process_next(block=False) is False
+
+
+class TestCaptureToPending:
+    def test_capture_lands_in_pending_and_is_queued(
         self, pipeline_mocks, sample_photo, isolated_state
     ):
+        # Arrange
+        pipeline_mocks.capture_photo.return_value = str(sample_photo)
+
         # Act
-        pixelpotion.full_pipeline(str(sample_photo))
+        name = pixelpotion.capture_to_pending("anime")
+
+        # Assert — durable before anything else happens; AI not run inline.
+        assert name == SAMPLE_PHOTO_NAME
+        assert (isolated_state.pending / SAMPLE_PHOTO_NAME).exists()
+        assert pixelpotion.work_queue.qsize() == 1
+        pipeline_mocks.process_with_ai.assert_not_called()
+        assert pixelpotion.status["capturing"] is False
+
+    def test_reports_error_when_capture_fails(self, pipeline_mocks, isolated_state):
+        # Arrange — button pressed but the camera returned nothing.
+        pipeline_mocks.capture_photo.return_value = None
+
+        # Act
+        name = pixelpotion.capture_to_pending("pixar")
+
+        # Assert
+        assert name is None
+        assert pixelpotion.status["last_action"] == "Error: could not capture photo"
+        assert list(isolated_state.pending.iterdir()) == []
+        assert pixelpotion.work_queue.qsize() == 0
+
+    def test_aborts_when_photo_cannot_be_made_pending(
+        self, pipeline_mocks, sample_photo, monkeypatch
+    ):
+        # Arrange
+        pipeline_mocks.capture_photo.return_value = str(sample_photo)
+        monkeypatch.setattr(pixelpotion, "ensure_in_pending", lambda path: False)
+
+        # Act
+        name = pixelpotion.capture_to_pending("pixar")
+
+        # Assert — never continues towards AI without a durable copy.
+        assert name is None
+        assert pixelpotion.status["last_action"] == "Error: could not save photo"
+        assert pixelpotion.work_queue.qsize() == 0
+
+    def test_second_capture_during_processing_is_captured_and_queued(
+        self, pipeline_mocks, isolated_state
+    ):
+        # Arrange — the worker is busy with a first photo.
+        first = isolated_state.originals / "photo_20260610_143052.jpg"
+        second = isolated_state.originals / "photo_20260610_143110.jpg"
+        for photo in (first, second):
+            photo.write_bytes(make_jpeg_bytes())
+        pipeline_mocks.capture_photo.return_value = str(first)
+        pixelpotion.capture_to_pending("pixar")
+        captured_while_busy = []
+
+        def slow_ai(image_path, prompt):
+            pipeline_mocks.capture_photo.return_value = str(second)
+            captured_while_busy.append(pixelpotion.capture_to_pending("pixar"))
+            return None
+
+        pipeline_mocks.process_with_ai.side_effect = slow_ai
+
+        # Act
+        pixelpotion.process_next(block=False)
+
+        # Assert — the press during processing was not dropped.
+        assert captured_while_busy == [second.name]
+        assert (isolated_state.pending / second.name).exists()
+        assert pixelpotion.work_queue.qsize() == 1
+
+
+class TestProcessPendingPhoto:
+    @pytest.fixture
+    def pending_photo(self, isolated_state):
+        photo = isolated_state.pending / SAMPLE_PHOTO_NAME
+        photo.write_bytes(make_jpeg_bytes())
+        return photo
+
+    def test_happy_path_delivers_and_clears_pending(
+        self, pipeline_mocks, pending_photo, isolated_state
+    ):
+        # Act
+        pixelpotion.enqueue_pending(SAMPLE_PHOTO_NAME)
+        pixelpotion.process_next(block=False)
 
         # Assert
         pipeline_mocks.process_with_ai.assert_called_once()
@@ -106,69 +233,67 @@ class TestFullPipeline:
         assert pixelpotion.status["last_action"].startswith("✅ Done")
         assert pixelpotion.status["processing"] is False
 
-    def test_without_wifi_photo_is_queued_and_ai_is_skipped(
-        self, pipeline_mocks, sample_photo, isolated_state
+    def test_without_wifi_photo_stays_pending_and_ai_is_skipped(
+        self, pipeline_mocks, pending_photo
     ):
         # Arrange
         pipeline_mocks.is_wifi_connected.return_value = False
 
         # Act
-        pixelpotion.full_pipeline(str(sample_photo))
+        pixelpotion.process_pending_photo(SAMPLE_PHOTO_NAME)
 
         # Assert — durability contract: the photo survives in pending.
-        assert (isolated_state.pending / SAMPLE_PHOTO_NAME).exists()
+        assert pending_photo.exists()
         pipeline_mocks.process_with_ai.assert_not_called()
         assert "No WiFi" in pixelpotion.status["last_action"]
 
-    def test_reports_error_when_capture_fails(
-        self, pipeline_mocks, isolated_state
-    ):
-        # Arrange — button pressed but the camera returned nothing.
-        pipeline_mocks.capture_photo.return_value = None
-
-        # Act
-        pixelpotion.full_pipeline()
-
-        # Assert
-        assert pixelpotion.status["last_action"] == "Error: could not capture photo"
-        assert list(isolated_state.pending.glob("*.jpg")) == []
-        pipeline_mocks.process_with_ai.assert_not_called()
-
-    def test_keeps_photo_pending_when_ai_fails(
-        self, pipeline_mocks, sample_photo, isolated_state
-    ):
+    def test_keeps_photo_pending_when_ai_fails(self, pipeline_mocks, pending_photo):
         # Arrange
         pipeline_mocks.process_with_ai.return_value = None
 
         # Act
-        pixelpotion.full_pipeline(str(sample_photo))
+        pixelpotion.process_pending_photo(SAMPLE_PHOTO_NAME)
 
         # Assert
-        assert (isolated_state.pending / SAMPLE_PHOTO_NAME).exists()
+        assert pending_photo.exists()
         pipeline_mocks.send_telegram_photos.assert_not_called()
         assert "kept in pending" in pixelpotion.status["last_action"]
 
     def test_keeps_photo_pending_when_telegram_fails(
-        self, pipeline_mocks, sample_photo, isolated_state
+        self, pipeline_mocks, pending_photo
     ):
         # Arrange
         pipeline_mocks.send_telegram_photos.return_value = False
 
         # Act
-        pixelpotion.full_pipeline(str(sample_photo))
+        pixelpotion.process_pending_photo(SAMPLE_PHOTO_NAME)
 
         # Assert — failed delivery must remain retryable.
-        assert (isolated_state.pending / SAMPLE_PHOTO_NAME).exists()
+        assert pending_photo.exists()
         assert "Telegram failed" in pixelpotion.status["last_action"]
 
+    def test_keeps_photo_pending_when_a_step_raises(
+        self, pipeline_mocks, pending_photo
+    ):
+        # Arrange
+        pipeline_mocks.send_telegram_photos.side_effect = RuntimeError("disk I/O error")
+
+        # Act
+        pixelpotion.process_pending_photo(SAMPLE_PHOTO_NAME)
+
+        # Assert
+        assert pending_photo.exists()
+        assert "kept in pending" in pixelpotion.status["last_action"]
+        assert pixelpotion.status["processing"] is False
+
     def test_explicit_style_id_overrides_active_style(
-        self, pipeline_mocks, sample_photo
+        self, pipeline_mocks, pending_photo
     ):
         # Arrange
         pixelpotion.config["active_style_id"] = "pixar"
 
         # Act
-        pixelpotion.full_pipeline(str(sample_photo), style_id="anime")
+        pixelpotion.process_pending_photo(SAMPLE_PHOTO_NAME, style_id="anime")
 
         # Assert
         _, prompt_arg = pipeline_mocks.process_with_ai.call_args.args
@@ -177,76 +302,37 @@ class TestFullPipeline:
         assert style_name_arg == "Anime / Manga"
 
     def test_unknown_style_id_falls_back_to_active_style(
-        self, pipeline_mocks, sample_photo
+        self, pipeline_mocks, pending_photo
     ):
         # Arrange
         pixelpotion.config["active_style_id"] = "pixar"
 
         # Act
-        pixelpotion.full_pipeline(str(sample_photo), style_id="vaporwave_deleted")
+        pixelpotion.process_pending_photo(SAMPLE_PHOTO_NAME, style_id="vaporwave_deleted")
 
         # Assert
         style_name_arg = pipeline_mocks.send_telegram_photos.call_args.args[2]
         assert style_name_arg == "Pixar 3D"
 
-    def test_skips_when_another_run_holds_the_lock(
-        self, pipeline_mocks, sample_photo
-    ):
-        # Arrange — simulate a concurrent run (button + web capture).
-        assert pixelpotion.processing_lock.acquire(blocking=False)
-        try:
-            # Act
-            pixelpotion.full_pipeline(str(sample_photo))
-
-            # Assert — second invocation must be a no-op.
-            pipeline_mocks.process_with_ai.assert_not_called()
-            pipeline_mocks.send_telegram_photos.assert_not_called()
-        finally:
-            pixelpotion.processing_lock.release()
-
-
-class TestProcessPendingPhoto:
-    def test_returns_false_when_pending_file_is_missing(self):
-        # Act / Assert
+    def test_returns_false_when_pending_file_is_missing(self, pipeline_mocks):
+        # Act / Assert — e.g. deleted from the gallery while it was queued.
         assert pixelpotion.process_pending_photo("photo_19990101_000000.jpg") is False
-
-    def test_restores_original_and_runs_pipeline(
-        self, monkeypatch, isolated_state
-    ):
-        # Arrange — pending survived a restart; original dir was cleaned.
-        pending_file = isolated_state.pending / SAMPLE_PHOTO_NAME
-        pending_file.write_bytes(make_jpeg_bytes())
-        run_pipeline = MagicMock()
-        monkeypatch.setattr(pixelpotion, "full_pipeline", run_pipeline)
-
-        # Act
-        result = pixelpotion.process_pending_photo(
-            SAMPLE_PHOTO_NAME, style_id="watercolor"
-        )
-
-        # Assert
-        assert result is True
-        restored = isolated_state.originals / SAMPLE_PHOTO_NAME
-        assert restored.exists()
-        run_pipeline.assert_called_once_with(str(restored), style_id="watercolor")
+        pipeline_mocks.process_with_ai.assert_not_called()
 
     @pytest.mark.parametrize("hostile_name", ["../../client_secrets.jpg", "ABSOLUTE"])
     def test_refuses_files_outside_the_pending_queue(
-        self, monkeypatch, isolated_state, tmp_path, hostile_name
+        self, pipeline_mocks, isolated_state, tmp_path, hostile_name
     ):
         # Arrange — a photo-looking file that lives outside photos/pending.
         outside = tmp_path / "client_secrets.jpg"
         outside.write_bytes(make_jpeg_bytes())
         if hostile_name == "ABSOLUTE":
             hostile_name = str(outside)
-        run_pipeline = MagicMock()
-        monkeypatch.setattr(pixelpotion, "full_pipeline", run_pipeline)
 
         # Act
         result = pixelpotion.process_pending_photo(hostile_name)
 
-        # Assert — nothing copied into originals, pipeline never started.
+        # Assert — the pipeline never touched it.
         assert result is False
-        assert list(isolated_state.originals.iterdir()) == []
-        run_pipeline.assert_not_called()
+        pipeline_mocks.process_with_ai.assert_not_called()
         assert outside.exists()

@@ -12,11 +12,14 @@ to per-test temporary locations by the autouse `isolated_state` fixture.
 
 Deliberately NOT unit-tested — infinite loops and pure hardware/OS glue whose
 tests would couple to implementation details without protecting refactors:
-auto_retry_loop, gpio_button_listener, main.
+auto_retry_loop, gpio_button_listener, _worker_loop, main. Their bodies
+delegate to tested helpers (capture_to_pending, enqueue_pending,
+process_next), which tests drive synchronously.
 """
 
 import copy
 import logging
+import queue
 import sys
 from io import BytesIO
 from pathlib import Path
@@ -153,7 +156,17 @@ def isolated_state(tmp_path, monkeypatch):
     pixelpotion.config.clear()
     pixelpotion.config.update(copy.deepcopy(BASELINE_CONFIG))
     pixelpotion.status.clear()
-    pixelpotion.status.update({"last_action": "Waiting...", "processing": False})
+    pixelpotion.status.update(
+        {"last_action": "Waiting...", "processing": False, "capturing": False}
+    )
+    # The processing queue and its de-duplication set are module-level too.
+    while True:
+        try:
+            pixelpotion.work_queue.get_nowait()
+            pixelpotion.work_queue.task_done()
+        except queue.Empty:
+            break
+    pixelpotion._queued_names.clear()
 
     ai_provider._cached_client = None
     ai_provider._cached_api_key = ""

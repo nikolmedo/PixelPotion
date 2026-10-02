@@ -10,6 +10,8 @@ import copy
 import hmac
 import json
 import time
+import queue
+import shutil
 import uuid
 import signal
 import logging
@@ -505,21 +507,62 @@ def redact(message: str, *secrets_to_hide: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Full pipeline
+# Pipeline: capture → pending (durable) → queue → single worker
 # ---------------------------------------------------------------------------
-processing_lock = threading.Lock()
-status = {"last_action": "Waiting...", "processing": False}
+# `status` is read by templates and /status_api and written by the capture
+# path and the worker thread. It stays one module-level dict mutated in place;
+# every access goes through status_lock via the helpers below.
+status_lock = threading.Lock()
+status = {"last_action": "Waiting...", "processing": False, "capturing": False}
+
+# Processing runs on ONE long-lived worker thread fed by this queue, so a
+# capture never waits for (or is dropped by) a photo that is being processed.
+work_queue: "queue.Queue[tuple[str, str | None]]" = queue.Queue()
+_queued_names: set[str] = set()   # queued or in progress, for de-duplication
+_queue_lock = threading.Lock()
+_worker_thread: threading.Thread | None = None
 
 
-def ensure_in_pending(photo_path):
-    """Mark the photo as pending so it survives a restart / can be retried."""
-    import shutil
+def update_status(**fields):
+    with status_lock:
+        status.update(fields)
+
+
+def status_snapshot() -> dict:
+    with status_lock:
+        return dict(status)
+
+
+def _resolve_style(style_id):
+    """Return (prompt, name) for a style id, falling back to the active style."""
+    for s in config.get("styles", []):
+        if s["id"] == style_id:
+            return s["prompt"], s["name"]
+    return get_active_prompt(), get_active_style_name()
+
+
+def ensure_in_pending(photo_path) -> bool:
+    """Place the photo in the pending queue; True once it is safely there.
+
+    The copy is written under a temporary dot-name (which never matches
+    `*.jpg`), flushed to disk and renamed into place, so the queue never holds
+    a half-written photo.
+    """
     pending_path = PHOTOS_PENDING / Path(photo_path).name
-    if not pending_path.exists():
-        try:
-            shutil.copy2(photo_path, pending_path)
-        except Exception as e:
-            log.error("Could not copy to pending: %s", e)
+    if pending_path.exists():
+        return True
+    tmp_path = PHOTOS_PENDING / f".{pending_path.name}.tmp"
+    try:
+        with open(photo_path, "rb") as src, open(tmp_path, "wb") as dst:
+            shutil.copyfileobj(src, dst)
+            dst.flush()
+            os.fsync(dst.fileno())
+        os.replace(tmp_path, pending_path)
+        return True
+    except OSError as e:
+        log.error("Could not copy %s to pending: %s", Path(photo_path).name, e)
+        tmp_path.unlink(missing_ok=True)
+        return False
 
 
 def remove_from_pending(photo_path):
@@ -528,59 +571,38 @@ def remove_from_pending(photo_path):
     pending_path.unlink(missing_ok=True)
 
 
-def full_pipeline(photo_path=None, style_id=None):
-    if not processing_lock.acquire(blocking=False):
-        log.warning("Pipeline already running, skipping")
-        return
+def enqueue_pending(filename, style_id=None) -> bool:
+    """Queue a pending photo for the worker; False if it is already queued."""
+    with _queue_lock:
+        if filename in _queued_names:
+            return False
+        _queued_names.add(filename)
+    work_queue.put((filename, style_id))
+    return True
+
+
+def capture_to_pending(style_id=None) -> str | None:
+    """Capture a photo, make it durable in pending and queue it.
+
+    Only the camera lock is held, so capturing works while another photo is
+    being processed. Returns the pending file name, or None on failure.
+    """
+    update_status(capturing=True, last_action="Capturing pixels...")
     try:
-        status["processing"] = True
-        # Resolve style
-        prompt, style_name = None, ""
-        if style_id:
-            for s in config.get("styles", []):
-                if s["id"] == style_id:
-                    prompt, style_name = s["prompt"], s["name"]
-                    break
-        if prompt is None:
-            prompt, style_name = get_active_prompt(), get_active_style_name()
-
-        # 1. Capture
-        if photo_path is None:
-            status["last_action"] = "Capturing pixels..."
-            photo_path = capture_photo()
-            if not photo_path:
-                status["last_action"] = "Error: could not capture photo"
-                return
-
-        # Every photo that enters the pipeline is pending until delivered.
-        ensure_in_pending(photo_path)
-
-        # 2. Check WiFi
-        if not is_wifi_connected():
-            status["last_action"] = f"No WiFi — kept in pending: {Path(photo_path).name}"
-            return
-
-        # 3. Process
-        status["last_action"] = f"Adding potion ({style_name})..."
-        processed = process_with_ai(photo_path, prompt)
-        if not processed:
-            status["last_action"] = "AI processing failed — kept in pending for retry"
-            return
-
-        # 4. Send
-        status["last_action"] = "Sending via Telegram..."
-        success = send_telegram_photos(photo_path, processed, style_name)
-        if success:
-            remove_from_pending(photo_path)
-            status["last_action"] = f"✅ Done ({style_name}): {Path(photo_path).name}"
-        else:
-            status["last_action"] = "Telegram failed — kept in pending for retry"
-    except Exception as e:
-        status["last_action"] = f"Error: {e} — kept in pending"
-        log.error("Pipeline error: %s", e)
+        photo_path = capture_photo()
+        if not photo_path:
+            update_status(last_action="Error: could not capture photo")
+            return None
+        # A photo that is not durably pending must not go any further.
+        if not ensure_in_pending(photo_path):
+            update_status(last_action="Error: could not save photo")
+            return None
+        name = Path(photo_path).name
+        enqueue_pending(name, style_id)
+        update_status(last_action=f"Captured {name} — queued for processing")
+        return name
     finally:
-        status["processing"] = False
-        processing_lock.release()
+        update_status(capturing=False)
 
 
 def _resolve_pending(filename) -> Path | None:
@@ -603,36 +625,95 @@ def _resolve_pending(filename) -> Path | None:
     return candidate
 
 
-def process_pending_photo(filename, style_id=None):
+def process_pending_photo(filename, style_id=None) -> bool:
+    """Run AI + Telegram for one pending photo. Called by the worker thread.
+
+    Returns False if the photo is not (or no longer) in the pending queue.
+    The photo leaves pending only after Telegram delivery succeeds.
+    """
     pending_path = _resolve_pending(filename)
     if pending_path is None or not pending_path.exists():
         return False
-    filename = pending_path.name
-    orig_path = PHOTOS_ORIGINAL / filename
-    if not orig_path.exists():
-        import shutil
-        shutil.copy2(pending_path, orig_path)
-    full_pipeline(str(orig_path), style_id=style_id)
+    name = pending_path.name
+    prompt, style_name = _resolve_style(style_id)
+    update_status(processing=True)
+    try:
+        if not is_wifi_connected():
+            update_status(last_action=f"No WiFi — kept in pending: {name}")
+            return True
+
+        update_status(last_action=f"Adding potion ({style_name})...")
+        processed = process_with_ai(str(pending_path), prompt)
+        if not processed:
+            update_status(last_action="AI processing failed — kept in pending for retry")
+            return True
+
+        update_status(last_action="Sending via Telegram...")
+        if send_telegram_photos(str(pending_path), processed, style_name):
+            remove_from_pending(pending_path)
+            update_status(last_action=f"✅ Done ({style_name}): {name}")
+        else:
+            update_status(last_action="Telegram failed — kept in pending for retry")
+        return True
+    except Exception as e:
+        update_status(last_action=f"Error: {e} — kept in pending")
+        log.error("Pipeline error for %s: %s", name, e)
+        return True
+    finally:
+        update_status(processing=False)
+
+
+def process_next(block=True, timeout=None) -> bool:
+    """Process one queued photo; False if the queue was empty.
+
+    The worker loop calls this forever; tests call it with block=False to
+    run the pipeline synchronously.
+    """
+    try:
+        filename, style_id = work_queue.get(block=block, timeout=timeout)
+    except queue.Empty:
+        return False
+    try:
+        process_pending_photo(filename, style_id=style_id)
+    except Exception as e:
+        log.error("Worker error for %s: %s", filename, e)
+    finally:
+        with _queue_lock:
+            _queued_names.discard(filename)
+        work_queue.task_done()
     return True
 
 
+def _worker_loop():
+    while True:
+        process_next()
+
+
+def start_worker():
+    """Start the processing worker thread unless it is already running."""
+    global _worker_thread
+    if _worker_thread is None or not _worker_thread.is_alive():
+        _worker_thread = threading.Thread(
+            target=_worker_loop, name="pixelpotion-worker", daemon=True
+        )
+        _worker_thread.start()
+
+
+def pending_photo_names() -> list[str]:
+    return sorted(p.name for p in PHOTOS_PENDING.glob("*.jpg"))
+
+
 def auto_retry_loop():
-    """Periodically retry photos that are still in PHOTOS_PENDING."""
+    """Periodically queue photos that are still in PHOTOS_PENDING."""
     while True:
         time.sleep(RETRY_INTERVAL_SECONDS)
         try:
-            if status.get("processing") or not is_wifi_connected():
+            if not is_wifi_connected():
                 continue
-            pending = sorted(PHOTOS_PENDING.glob("*.jpg"))
-            if not pending:
-                continue
-            log.info("Auto-retry: %d pending photo(s)", len(pending))
-            style_id = config.get("active_style_id")
-            for p in pending:
-                if status.get("processing") or not is_wifi_connected():
-                    break
-                process_pending_photo(p.name, style_id=style_id)
-                time.sleep(2)
+            queued = sum(enqueue_pending(name, config.get("active_style_id"))
+                         for name in pending_photo_names())
+            if queued:
+                log.info("Auto-retry: queued %d pending photo(s)", queued)
         except Exception as e:
             log.error("Auto-retry loop error: %s", e)
 
@@ -655,11 +736,8 @@ def gpio_button_listener():
                 continue
             last_press = now
             log.info("Button pressed! Style: %s", config.get("active_style_id"))
-            threading.Thread(
-                target=full_pipeline,
-                kwargs={"style_id": config.get("active_style_id")},
-                daemon=True,
-            ).start()
+            # Capture inline (camera lock only); processing is queued.
+            capture_to_pending(config.get("active_style_id"))
     except ImportError:
         log.warning("RPi.GPIO not available — physical button disabled")
         while True:
@@ -676,7 +754,7 @@ def index():
     pending_photos = sorted(PHOTOS_PENDING.glob("*.jpg"), reverse=True)
     camera_modules = [{"id": k, "label": v["label"]} for k, v in CAMERA_PROFILES.items()]
     return render_template(
-        "index.html", config=config, status=status,
+        "index.html", config=config, status=status_snapshot(),
         wifi_connected=is_wifi_connected(),
         pending_count=len(list(pending_photos)),
         styles=config.get("styles", []),
@@ -737,15 +815,21 @@ def save_wifi_route():
 
 @app.route("/capture", methods=["POST"])
 def capture_route():
-    """AJAX capture endpoint — returns JSON, no redirect."""
+    """AJAX capture endpoint — returns JSON, no redirect.
+
+    The capture itself runs in this request (camera lock only); AI and
+    Telegram are queued for the worker, so this works while another photo is
+    still being processed.
+    """
     style_id = request.form.get("style_id", config.get("active_style_id", ""))
-    if status["processing"]:
-        return jsonify({"ok": False, "error": "A process is already running."})
     with config_lock:
         config["active_style_id"] = style_id
         save_config(config)
-    threading.Thread(target=full_pipeline, kwargs={"style_id": style_id}, daemon=True).start()
-    return jsonify({"ok": True, "message": "Capture started..."})
+    name = capture_to_pending(style_id)
+    if name is None:
+        return jsonify({"ok": False, "error": status_snapshot()["last_action"]})
+    return jsonify({"ok": True, "message": f"Captured {name} — processing queued",
+                    "filename": name})
 
 
 @app.route("/set_active_style", methods=["POST"])
@@ -839,15 +923,20 @@ def process_photo_route():
     if not filename:
         flash("No file specified.", "error")
         return redirect(url_for("gallery"))
-    if _resolve_pending(filename) is None:
+    pending_path = _resolve_pending(filename)
+    if pending_path is None:
         flash("Invalid file name.", "error")
         return redirect(url_for("gallery"))
     if not is_wifi_connected():
         flash("No WiFi connection.", "error")
         return redirect(url_for("gallery"))
-    threading.Thread(target=process_pending_photo, args=(filename,),
-                     kwargs={"style_id": style_id}, daemon=True).start()
-    flash(f"Processing {filename}...", "info")
+    if not pending_path.exists():
+        flash(f"{filename} was not found.", "error")
+        return redirect(url_for("gallery"))
+    if enqueue_pending(filename, style_id):
+        flash(f"Queued {filename} for processing.", "info")
+    else:
+        flash(f"{filename} is already queued.", "info")
     return redirect(url_for("gallery"))
 
 
@@ -857,14 +946,8 @@ def process_all_route():
     if not is_wifi_connected():
         flash("No WiFi connection.", "error")
         return redirect(url_for("gallery"))
-
-    def run():
-        for p in sorted(PHOTOS_PENDING.glob("*.jpg")):
-            process_pending_photo(p.name, style_id=style_id)
-            time.sleep(2)
-
-    threading.Thread(target=run, daemon=True).start()
-    flash("Processing all photos...", "info")
+    queued = sum(enqueue_pending(name, style_id) for name in pending_photo_names())
+    flash(f"Queued {queued} photo(s) for processing.", "info")
     return redirect(url_for("gallery"))
 
 
@@ -926,7 +1009,7 @@ def serve_pending_photo(filename):
 @app.route("/status_api")
 def status_api():
     return jsonify({
-        **status,
+        **status_snapshot(),
         "wifi": is_wifi_connected(),
         "pending_count": len(list(PHOTOS_PENDING.glob("*.jpg"))),
         "active_style_id": config.get("active_style_id", ""),
@@ -967,6 +1050,7 @@ def main():
     else:
         start_ap_mode()
 
+    start_worker()
     threading.Thread(target=gpio_button_listener, daemon=True).start()
     threading.Thread(target=auto_retry_loop, daemon=True).start()
     log.info("Auto-retry loop running every %d seconds", RETRY_INTERVAL_SECONDS)

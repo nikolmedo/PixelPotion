@@ -222,7 +222,9 @@
     <script>
         const CSRF_TOKEN = {{ csrf_token()|tojson }};
         let selectedStyle = {{ active_style_id|tojson }};
-        let isProcessing = {{ 'true' if status.processing else 'false' }};
+        // The button is only busy while the camera is capturing; processing
+        // runs in the background and never blocks a new capture.
+        let isCapturing = {{ 'true' if status.capturing else 'false' }};
 
         function selectStyle(id) {
             selectedStyle = id;
@@ -246,10 +248,10 @@
         });
 
         function doCapture() {
-            if (isProcessing) return;
+            if (isCapturing) return;
             const btn = document.getElementById('captureBtn');
             btn.disabled = true;
-            isProcessing = true;
+            isCapturing = true;
             showToast('📸 Capturing...');
 
             const formData = new FormData();
@@ -262,16 +264,14 @@
             })
                 .then(r => r.json())
                 .then(data => {
-                    if (!data.ok) {
-                        showToast('⚠️ ' + data.error);
-                        btn.disabled = false;
-                        isProcessing = false;
-                    }
+                    showToast(data.ok ? '✅ ' + data.message : '⚠️ ' + data.error);
+                    btn.disabled = false;
+                    isCapturing = false;
                 })
                 .catch(() => {
                     showToast('❌ Connection error');
                     btn.disabled = false;
-                    isProcessing = false;
+                    isCapturing = false;
                 });
         }
 
@@ -320,22 +320,17 @@
             });
         }
 
-        // Poll status — re-enable button when processing finishes
+        // Poll status — the button follows the camera, the text follows processing
         setInterval(() => {
             fetch('/status_api').then(r => r.json()).then(data => {
                 const el = document.getElementById('statusText');
                 el.textContent = data.last_action;
 
+                el.classList.toggle('processing', data.processing || data.capturing);
+
                 const btn = document.getElementById('captureBtn');
-                if (data.processing) {
-                    el.classList.add('processing');
-                    btn.disabled = true;
-                    isProcessing = true;
-                } else {
-                    el.classList.remove('processing');
-                    btn.disabled = false;
-                    isProcessing = false;
-                }
+                btn.disabled = data.capturing;
+                isCapturing = data.capturing;
             });
         }, 2000);
     </script>
