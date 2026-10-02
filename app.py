@@ -13,11 +13,12 @@ import uuid
 import signal
 import logging
 import secrets
+import tempfile
 import threading
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
@@ -75,6 +76,8 @@ def load_config() -> dict:
 def save_config(cfg: dict):
     with open(CONFIG_PATH, "w") as f:
         json.dump(cfg, f, indent=2, ensure_ascii=False)
+    # config.json holds API keys and the WiFi password: owner-only access.
+    os.chmod(CONFIG_PATH, 0o600)
 
 
 def get_active_prompt() -> str:
@@ -184,10 +187,19 @@ network={{
     key_mgmt=WPA-PSK
 }}
 '''
-        with open("/tmp/wpa_supplicant.conf", "w") as f:
-            f.write(wpa_conf)
-        subprocess.run(["sudo", "cp", "/tmp/wpa_supplicant.conf",
-                        "/etc/wpa_supplicant/wpa_supplicant.conf"], timeout=5)
+        # The PSK is written to a private (0600) temp file that only lives
+        # until it has been copied into place.
+        fd, wpa_tmp = tempfile.mkstemp(prefix="pixelpotion-wpa-", suffix=".conf")
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(wpa_conf)
+            subprocess.run(["sudo", "cp", wpa_tmp,
+                            "/etc/wpa_supplicant/wpa_supplicant.conf"], timeout=5)
+        finally:
+            try:
+                os.unlink(wpa_tmp)
+            except OSError:
+                pass
         subprocess.run(["sudo", "bash", "-c",
                         "sed -i '/^interface wlan0/,/^$/d' /etc/dhcpcd.conf"], timeout=5)
         subprocess.run(["sudo", "systemctl", "restart", "dhcpcd"], timeout=15)
@@ -317,7 +329,12 @@ def send_telegram_photos(original_path, processed_path, style_name=""):
             log.error("Telegram error: %s / %s", resp1.text, resp2.text)
         return ok
     except Exception as e:
-        log.error("Error sending via Telegram: %s", e)
+        # requests puts the request URL — which embeds the bot token — in its
+        # exception text, so never log it verbatim.
+        message = str(e)
+        for secret in {token, quote(token, safe="")}:
+            message = message.replace(secret, "<redacted>")
+        log.error("Error sending via Telegram: %s", message)
         return False
 
 

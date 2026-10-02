@@ -670,3 +670,88 @@ class TestCsrfProtection:
         assert audit.forms, f"expected forms on {page}"
         missing = [action for action, has_token in audit.forms if not has_token]
         assert missing == []
+
+
+class FormNestingAudit(HTMLParser):
+    """Track the deepest <form> nesting seen in a document."""
+
+    def __init__(self):
+        super().__init__()
+        self.depth = 0
+        self.max_depth = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "form":
+            self.depth += 1
+            self.max_depth = max(self.max_depth, self.depth)
+
+    def handle_endtag(self, tag):
+        if tag == "form":
+            self.depth -= 1
+
+
+class TestTemplateInjectionSafety:
+    def test_style_name_with_quote_lives_only_in_escaped_data_attribute(self, client):
+        # Arrange — an apostrophe used to break out of the inline confirm() string.
+        pixelpotion.config["styles"].append({
+            "id": "custom_1a2b3c4d",
+            "name": "Van Gogh's Starry Night",
+            "prompt": "TASK: Transform this photograph into a Van Gogh painting.",
+        })
+
+        # Act
+        body = client.get("/styles").data
+
+        # Assert
+        assert b'data-style-name="Van Gogh&#39;s Starry Night"' in body
+        assert b"Van Gogh's" not in body
+        assert b"onsubmit=" not in body
+
+    def test_active_style_id_is_embedded_as_a_json_string(self, client):
+        # Act
+        body = client.get("/").get_data(as_text=True)
+
+        # Assert
+        assert 'let selectedStyle = "pixar";' in body
+
+    def test_wifi_scan_results_are_not_built_with_inner_html(self, client):
+        # Act
+        body = client.get("/").get_data(as_text=True)
+
+        # Assert — SSIDs are attacker-controlled; they must go through textContent.
+        assert "innerHTML" not in body
+        assert "item.textContent = ssid;" in body
+
+    def test_gallery_has_no_nested_forms(self, client, isolated_state, monkeypatch):
+        # Arrange
+        monkeypatch.setattr(pixelpotion, "is_wifi_connected", lambda: True)
+        for name in ("photo_20260608_110001.jpg", "photo_20260608_110002.jpg"):
+            (isolated_state.pending / name).write_bytes(make_jpeg_bytes())
+        audit = FormNestingAudit()
+
+        # Act
+        audit.feed(client.get("/gallery").get_data(as_text=True))
+
+        # Assert
+        assert audit.max_depth == 1
+        assert audit.depth == 0
+
+    def test_gallery_checkboxes_belong_to_the_bulk_form(
+        self, client, isolated_state
+    ):
+        # Arrange
+        (isolated_state.pending / "photo_20260608_110001.jpg").write_bytes(
+            make_jpeg_bytes()
+        )
+
+        # Act
+        body = client.get("/gallery").get_data(as_text=True)
+
+        # Assert
+        assert re.search(
+            r'<input type="checkbox" name="selected_photos" '
+            r'value="photo_20260608_110001.jpg" form="bulkForm">',
+            body,
+        )
+        assert "onclick=\"processOne(" not in body
+        assert "openModal('" not in body

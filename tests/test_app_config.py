@@ -1,6 +1,8 @@
 """Tests for app.py configuration helpers — load/save/merge and style lookup."""
 
 import json
+import os
+import stat
 import sys
 
 import pytest
@@ -91,6 +93,19 @@ class TestSaveConfig:
         assert reloaded["styles"] == cfg["styles"]
         raw = isolated_state.config_path.read_bytes()
         assert b"\\u00e1" not in raw  # ensure_ascii=False keeps text readable
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes only")
+    def test_config_file_is_readable_only_by_owner(self, isolated_state):
+        # Arrange — a pre-existing world-readable config from an older install.
+        isolated_state.config_path.write_text("{}")
+        os.chmod(isolated_state.config_path, 0o644)
+
+        # Act
+        pixelpotion.save_config(pixelpotion.load_config())
+
+        # Assert — it holds API keys and the WiFi password.
+        mode = stat.S_IMODE(os.stat(isolated_state.config_path).st_mode)
+        assert mode == 0o600
 
     @pytest.mark.xfail(
         sys.platform == "win32",
