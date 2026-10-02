@@ -597,6 +597,60 @@ class TestGalleryActions:
             "info", "Queued photo_20260609_201500.jpg for processing."
         ) in get_flashes(client)
 
+    def test_process_photo_retries_a_photo_marked_as_failed(
+        self, client, monkeypatch, isolated_state
+    ):
+        # Arrange
+        monkeypatch.setattr(pixelpotion, "is_wifi_connected", lambda: True)
+        photo = isolated_state.pending / "photo_20260609_201500.jpg"
+        photo.write_bytes(make_jpeg_bytes())
+        pixelpotion.update_photo_state(
+            photo, style_id="anime", failed=True,
+            failed_reason="Gemini rejected the API key (403)",
+        )
+
+        # Act
+        client.post("/process_photo", data={
+            "filename": photo.name, "style_id": "anime",
+        })
+
+        # Assert
+        assert pixelpotion.read_photo_state(photo)["failed"] is False
+        assert pixelpotion.work_queue.get_nowait() == photo.name
+
+    def test_gallery_shows_the_failure_reason_escaped(self, client, isolated_state):
+        # Arrange — reasons can carry API text; it must render as text only.
+        photo = isolated_state.pending / "photo_20260609_201500.jpg"
+        photo.write_bytes(make_jpeg_bytes())
+        pixelpotion.update_photo_state(
+            photo, failed=True,
+            failed_reason='Gemini error 400: <img src=x onerror="alert(1)">',
+        )
+
+        # Act
+        body = client.get("/gallery").get_data(as_text=True)
+
+        # Assert
+        assert (
+            "Failed: Gemini error 400: &lt;img src=x onerror=&#34;alert(1)&#34;&gt;"
+            in body
+        )
+        assert '<img src=x onerror="alert(1)">' not in body
+
+    def test_gallery_shows_no_failure_badge_for_healthy_photos(
+        self, client, isolated_state
+    ):
+        # Arrange
+        (isolated_state.pending / "photo_20260609_201500.jpg").write_bytes(
+            make_jpeg_bytes()
+        )
+
+        # Act
+        body = client.get("/gallery").get_data(as_text=True)
+
+        # Assert
+        assert "Failed:" not in body
+
     def test_process_photo_reports_a_missing_photo(self, client, monkeypatch):
         # Arrange
         monkeypatch.setattr(pixelpotion, "is_wifi_connected", lambda: True)

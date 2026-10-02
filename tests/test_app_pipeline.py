@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import app as pixelpotion
+from ai_provider import AIResult
 from conftest import SAMPLE_PHOTO_NAME, make_jpeg_bytes
 
 ANIME_PROMPT_FRAGMENT = "Japanese anime"
@@ -18,7 +19,7 @@ def pipeline_mocks(monkeypatch, isolated_state):
 
     mocks = MagicMock()
     mocks.is_wifi_connected = MagicMock(return_value=True)
-    mocks.process_with_ai = MagicMock(return_value=str(processed_path))
+    mocks.process_with_ai = MagicMock(return_value=AIResult(path=str(processed_path)))
     mocks.send_telegram_photo = MagicMock(return_value=True)
     mocks.capture_photo = MagicMock(return_value=None)
     mocks.processed_path = str(processed_path)
@@ -31,14 +32,20 @@ def pipeline_mocks(monkeypatch, isolated_state):
 
 
 class TestProcessWithAi:
-    def test_returns_none_when_api_key_is_blank(self, monkeypatch, sample_photo):
+    def test_fails_without_calling_provider_when_api_key_is_blank(
+        self, monkeypatch, sample_photo
+    ):
         # Arrange
         pixelpotion.config["gemini_api_key"] = "   "
         process_image = MagicMock()
-        monkeypatch.setattr(pixelpotion, "process_image", process_image)
+        monkeypatch.setattr(pixelpotion, "process_image_result", process_image)
 
-        # Act / Assert — no key, no spend: the provider is never invoked.
-        assert pixelpotion.process_with_ai(str(sample_photo)) is None
+        # Act
+        result = pixelpotion.process_with_ai(str(sample_photo))
+
+        # Assert — no key, no spend; not permanent, so saving a key fixes it.
+        assert result.ok is False
+        assert result.permanent is False
         process_image.assert_not_called()
 
     def test_uses_active_style_prompt_when_none_is_given(
@@ -46,27 +53,34 @@ class TestProcessWithAi:
     ):
         # Arrange
         pixelpotion.config["active_style_id"] = "anime"
-        process_image = MagicMock(return_value="photos/processed/styled_x.jpg")
-        monkeypatch.setattr(pixelpotion, "process_image", process_image)
+        process_image = MagicMock(
+            return_value=AIResult(path="photos/processed/styled_20260610_143187.jpg")
+        )
+        monkeypatch.setattr(pixelpotion, "process_image_result", process_image)
 
         # Act
-        pixelpotion.process_with_ai(str(sample_photo))
+        result = pixelpotion.process_with_ai(str(sample_photo))
 
         # Assert
+        assert result.path == "photos/processed/styled_20260610_143187.jpg"
         path_arg, prompt_arg, key_arg = process_image.call_args.args
         assert path_arg == str(sample_photo)
         assert ANIME_PROMPT_FRAGMENT in prompt_arg
         assert key_arg == pixelpotion.config["gemini_api_key"]
 
-    def test_returns_none_when_provider_raises(self, monkeypatch, sample_photo):
+    def test_unexpected_provider_exception_is_a_transient_failure(
+        self, monkeypatch, sample_photo
+    ):
         # Arrange
-        process_image = MagicMock(
-            side_effect=RuntimeError("400 INVALID_ARGUMENT: API key not valid")
-        )
-        monkeypatch.setattr(pixelpotion, "process_image", process_image)
+        process_image = MagicMock(side_effect=OSError(28, "No space left on device"))
+        monkeypatch.setattr(pixelpotion, "process_image_result", process_image)
 
-        # Act / Assert
-        assert pixelpotion.process_with_ai(str(sample_photo)) is None
+        # Act
+        result = pixelpotion.process_with_ai(str(sample_photo))
+
+        # Assert
+        assert result.ok is False
+        assert result.permanent is False
 
 
 class TestPendingQueue:
@@ -123,7 +137,7 @@ class TestPendingQueue:
     ):
         # Arrange — processing fails, so the photo stays pending.
         (isolated_state.pending / SAMPLE_PHOTO_NAME).write_bytes(make_jpeg_bytes())
-        pipeline_mocks.process_with_ai.return_value = None
+        pipeline_mocks.process_with_ai.return_value = AIResult(reason="Gemini error 503")
         pixelpotion.enqueue_pending(SAMPLE_PHOTO_NAME)
         pixelpotion.process_next(block=False)
 
@@ -200,7 +214,7 @@ class TestCaptureToPending:
         def slow_ai(image_path, prompt):
             pipeline_mocks.capture_photo.return_value = str(second)
             captured_while_busy.append(pixelpotion.capture_to_pending("pixar"))
-            return None
+            return AIResult(reason="Gemini error 503")
 
         pipeline_mocks.process_with_ai.side_effect = slow_ai
 
@@ -261,7 +275,7 @@ class TestProcessPendingPhoto:
 
     def test_keeps_photo_pending_when_ai_fails(self, pipeline_mocks, pending_photo):
         # Arrange
-        pipeline_mocks.process_with_ai.return_value = None
+        pipeline_mocks.process_with_ai.return_value = AIResult(reason="Gemini error 503")
 
         # Act
         pixelpotion.process_pending_photo(SAMPLE_PHOTO_NAME)
@@ -418,7 +432,7 @@ class TestProcessPendingPhoto:
         # Arrange — the user deletes the photo from the gallery mid-AI.
         def delete_during_ai(image_path, prompt):
             pixelpotion._delete_pending_file(pending_photo)
-            return pipeline_mocks.processed_path
+            return AIResult(path=pipeline_mocks.processed_path)
 
         pipeline_mocks.process_with_ai.side_effect = delete_during_ai
 
@@ -500,3 +514,78 @@ class TestResolvePending:
         assert pixelpotion._resolve_pending(SAMPLE_PHOTO_NAME) == (
             isolated_state.pending / SAMPLE_PHOTO_NAME
         ).resolve()
+
+
+class TestPermanentFailures:
+    @pytest.fixture
+    def pending_photo(self, isolated_state):
+        photo = isolated_state.pending / SAMPLE_PHOTO_NAME
+        photo.write_bytes(make_jpeg_bytes())
+        return photo
+
+    def test_permanent_ai_failure_marks_photo_failed_and_keeps_it(
+        self, pipeline_mocks, pending_photo
+    ):
+        # Arrange
+        pipeline_mocks.process_with_ai.return_value = AIResult(
+            permanent=True, reason="blocked by safety filters"
+        )
+
+        # Act
+        pixelpotion.process_pending_photo(SAMPLE_PHOTO_NAME)
+
+        # Assert — still pending (durability), but marked and reported.
+        assert pending_photo.exists()
+        state = pixelpotion.read_photo_state(pending_photo)
+        assert state["failed"] is True
+        assert state["failed_reason"] == "blocked by safety filters"
+        assert pixelpotion.status["last_action"].startswith(
+            "Failed: blocked by safety filters"
+        )
+        pipeline_mocks.send_telegram_photo.assert_not_called()
+
+    def test_transient_ai_failure_does_not_mark_photo_failed(
+        self, pipeline_mocks, pending_photo
+    ):
+        # Arrange
+        pipeline_mocks.process_with_ai.return_value = AIResult(reason="Gemini error 503")
+
+        # Act
+        pixelpotion.process_pending_photo(SAMPLE_PHOTO_NAME)
+
+        # Assert
+        assert pixelpotion.read_photo_state(pending_photo)["failed"] is False
+
+    def test_auto_retry_selection_skips_failed_photos(self, isolated_state):
+        # Arrange
+        healthy = isolated_state.pending / "photo_20260610_143052.jpg"
+        blocked = isolated_state.pending / "photo_20260610_143110.jpg"
+        legacy = isolated_state.pending / "photo_20260609_090000.jpg"
+        for photo in (healthy, blocked, legacy):
+            photo.write_bytes(make_jpeg_bytes())
+        pixelpotion.update_photo_state(healthy, style_id="pixar", attempts=2)
+        pixelpotion.update_photo_state(
+            blocked, failed=True, failed_reason="Gemini rejected the API key (403)"
+        )
+
+        # Act
+        candidates = pixelpotion.retry_candidates()
+
+        # Assert
+        assert candidates == [legacy.name, healthy.name]
+
+    def test_manual_retry_clears_the_failed_mark(self, pending_photo):
+        # Arrange
+        pixelpotion.update_photo_state(
+            pending_photo, style_id="pixar",
+            failed=True, failed_reason="blocked by safety filters",
+        )
+
+        # Act
+        pixelpotion.request_processing(pending_photo, "pixar")
+
+        # Assert
+        state = pixelpotion.read_photo_state(pending_photo)
+        assert state["failed"] is False
+        assert state["failed_reason"] == ""
+        assert SAMPLE_PHOTO_NAME in pixelpotion.retry_candidates()

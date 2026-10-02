@@ -130,8 +130,10 @@ def make_gemini_response(image_bytes: bytes | None):
         part.inline_data.data = image_bytes
     candidate = MagicMock()
     candidate.content.parts = [part]
+    candidate.finish_reason = "STOP"
     response = MagicMock()
     response.candidates = [candidate]
+    response.prompt_feedback = None
     return response
 
 
