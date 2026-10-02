@@ -57,7 +57,7 @@ rejected API key or a safety filter), the photo stays in the **Gallery** marked
 | Part | Notes |
 | --- | --- |
 | Raspberry Pi Zero 2 W | The computer inside the camera. |
-| Camera Module 3 (IMX708) or Camera Module v2.1 (IMX219) | Either works. You pick which one in the portal. |
+| Camera Module 3 (IMX708) or Camera Module 2.1 (IMX219) | Either works. You pick which one in the portal. |
 | Camera cable for the Pi Zero | The Zero uses a **narrower** connector than full-size Pis. Check the cable fits both ends. |
 | Momentary push button + 2 jumper wires | The shutter button. |
 | 5 V 2.5 A micro-USB power supply | A weak supply causes random restarts. |
@@ -298,7 +298,7 @@ reasons:
 ### The colors look wrong (red or pink cast)
 
 Make sure **Camera module** in the portal matches the module you installed. Camera Module 3
-uses fixed white-balance settings that look wrong on a v2.1 module, and the other way round.
+uses fixed white-balance settings that look wrong on a 2.1 module, and the other way round.
 
 ### The portal does not load
 
@@ -308,8 +308,8 @@ uses fixed white-balance settings that look wrong on a v2.1 module, and the othe
 
 ### "Could not capture photo"
 
-Reseat the camera cable at both ends with the power off, then try `rpicam-still -o test.jpg`
-(older images call it `libcamera-still`).
+Reseat the camera cable at both ends with the power off, then try `libcamera-still -o test.jpg`
+(newer images also call it `rpicam-still`).
 
 ### Reading the logs
 
