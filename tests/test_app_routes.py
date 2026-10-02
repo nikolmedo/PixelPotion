@@ -720,6 +720,20 @@ class TestStatusApi:
         assert payload["last_action"] == "Waiting..."
         assert payload["processing"] is False
         assert payload["capturing"] is False
+        assert payload["step"] == "idle"
+        assert payload["failed_step"] == ""
+
+    def test_reports_which_step_failed(self, client):
+        # Arrange
+        pixelpotion.fail_status("brewing", "AI processing failed — kept in pending for retry")
+
+        # Act
+        payload = client.get("/status_api").get_json()
+
+        # Assert
+        assert payload["step"] == "failed"
+        assert payload["failed_step"] == "brewing"
+        assert payload["step"] in pixelpotion.PIPELINE_STEPS
 
 
 class TestScanWifi:

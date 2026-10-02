@@ -48,7 +48,7 @@
             </div>
         </form>
 
-        <div class="photo-grid">
+        <div class="photo-grid" id="photoGrid" data-count="{{ photos|length }}">
             {% for photo in photos %}
             <div class="photo-card">
                 <button type="button" class="photo-open" aria-label="Preview {{ photo.name }}">

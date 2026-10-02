@@ -428,3 +428,77 @@ class TestColourContrast:
     def test_contrast_maths_matches_the_wcag_reference(self):
         # Act / Assert — black on white is the 21:1 maximum.
         assert contrast_ratio("#000000", "#ffffff") == pytest.approx(21.0)
+
+
+class TestLiveStatus:
+    def test_tracker_starts_from_the_current_pipeline_step(self, client):
+        # Arrange
+        pixelpotion.fail_status("sending", "Telegram failed — kept in pending for retry")
+
+        # Act
+        parsed = audit(client, "/")
+        (tracker,) = parsed.find("ol", id="tracker")
+        steps = [a["data-step"] for t, a in parsed.tags if t == "li" and "data-step" in a]
+
+        # Assert
+        assert tracker["data-step"] == "failed"
+        assert tracker["data-failed-step"] == "sending"
+        assert steps == ["capturing", "brewing", "sending", "done"]
+
+    def test_tracker_names_only_steps_the_pipeline_reports(self, client):
+        # Act
+        parsed = audit(client, "/")
+        steps = {a["data-step"] for t, a in parsed.tags if t == "li" and "data-step" in a}
+
+        # Assert
+        assert steps <= set(pixelpotion.PIPELINE_STEPS)
+
+    def test_wifi_chip_can_be_updated_in_place(self, client, monkeypatch):
+        # Arrange
+        monkeypatch.setattr(pixelpotion, "is_wifi_connected", lambda: False)
+
+        # Act
+        body = client.get("/").get_data(as_text=True)
+
+        # Assert
+        assert re.search(r'id="wifiChip".*?class="chip-text">WiFi: AP Mode<', body, re.S)
+
+    @pytest.mark.parametrize("page", PAGES)
+    def test_connection_banner_is_hidden_until_polling_fails(self, client, page):
+        # Act
+        (banner,) = audit(client, page).find("div", id="connectionBanner")
+
+        # Assert
+        assert "hidden" in banner
+        assert banner["aria-live"] == "polite"
+
+    def test_polling_pauses_in_background_and_backs_off_on_errors(self):
+        # Arrange
+        source = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        poller = re.search(r"function pollStatus\(.*?\n    \}", source, re.S).group(0)
+
+        # Act / Assert — timing itself is checked in a real browser.
+        assert "visibilitychange" in poller
+        assert "document.hidden" in poller
+        assert "MAX_BACKOFF_MS" in poller
+        assert "updatePendingBadge(data.pending_count)" in poller
+        assert "setInterval" not in source
+
+    def test_index_polls_fast_only_while_busy(self):
+        # Act
+        source = (STATIC_DIR / "index.js").read_text(encoding="utf-8")
+
+        # Assert
+        assert "isBusy(data) ? 2000 : 10000" in source
+        assert "setInterval" not in source
+
+    def test_gallery_refreshes_without_losing_a_selection(self, client, full_pages):
+        # Arrange
+        source = (STATIC_DIR / "gallery.js").read_text(encoding="utf-8")
+
+        # Act
+        (grid,) = audit(client, "/gallery").find("div", id="photoGrid")
+
+        # Assert
+        assert grid["data-count"] == "1"
+        assert "preview.open" in source and "b.checked" in source

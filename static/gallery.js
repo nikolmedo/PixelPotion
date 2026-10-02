@@ -67,6 +67,15 @@
         });
     });
 
+    // Refresh the list when photos arrive or leave the queue, unless the
+    // user is in the middle of selecting photos or looking at one.
+    const grid = document.getElementById('photoGrid');
+    const shownCount = grid ? Number(grid.dataset.count) : 0;
+    PP.pollStatus(data => {
+        const busy = preview.open || Array.from(photoBoxes()).some(b => b.checked);
+        if (data.pending_count !== shownCount && !busy) window.location.reload();
+    }, () => 10000);
+
     const bulkForm = document.getElementById('bulkForm');
     if (bulkForm) {
         bulkForm.addEventListener('submit', e => {

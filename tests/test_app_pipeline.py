@@ -589,3 +589,111 @@ class TestPermanentFailures:
         assert state["failed"] is False
         assert state["failed_reason"] == ""
         assert SAMPLE_PHOTO_NAME in pixelpotion.retry_candidates()
+
+
+class TestPipelineStep:
+    """`status["step"]` drives the portal's progress tracker."""
+
+    @pytest.fixture
+    def pending_photo(self, isolated_state):
+        photo = isolated_state.pending / SAMPLE_PHOTO_NAME
+        photo.write_bytes(make_jpeg_bytes())
+        return photo
+
+    def step(self):
+        return pixelpotion.status["step"], pixelpotion.status["failed_step"]
+
+    def test_successful_capture_is_queued(self, pipeline_mocks, sample_photo):
+        # Arrange
+        pipeline_mocks.capture_photo.return_value = str(sample_photo)
+
+        # Act
+        pixelpotion.capture_to_pending("pixar")
+
+        # Assert
+        assert self.step() == ("queued", "")
+
+    def test_step_is_capturing_while_the_camera_works(self, pipeline_mocks):
+        # Arrange
+        seen = []
+        pipeline_mocks.capture_photo.side_effect = lambda: seen.append(self.step())
+
+        # Act
+        pixelpotion.capture_to_pending("pixar")
+
+        # Assert — and a camera failure is reported against the capture step.
+        assert seen == [("capturing", "")]
+        assert self.step() == ("failed", "capturing")
+
+    def test_walks_through_brewing_and_sending_to_done(
+        self, pipeline_mocks, pending_photo
+    ):
+        # Arrange
+        seen = []
+
+        def record_ai(image_path, prompt):
+            seen.append(self.step())
+            return AIResult(path=pipeline_mocks.processed_path)
+
+        def record_send(path, caption):
+            seen.append(self.step())
+            return True
+
+        pipeline_mocks.process_with_ai.side_effect = record_ai
+        pipeline_mocks.send_telegram_photo.side_effect = record_send
+
+        # Act
+        pixelpotion.process_pending_photo(SAMPLE_PHOTO_NAME)
+
+        # Assert
+        assert seen == [("brewing", ""), ("sending", ""), ("sending", "")]
+        assert self.step() == ("done", "")
+
+    def test_without_wifi_the_photo_waits(self, pipeline_mocks, pending_photo):
+        # Arrange
+        pipeline_mocks.is_wifi_connected.return_value = False
+
+        # Act
+        pixelpotion.process_pending_photo(SAMPLE_PHOTO_NAME)
+
+        # Assert
+        assert self.step() == ("waiting_wifi", "")
+
+    @pytest.mark.parametrize("result", [
+        AIResult(reason="Gemini error 503"),
+        AIResult(permanent=True, reason="blocked by safety filters"),
+    ])
+    def test_ai_failure_is_reported_against_brewing(
+        self, pipeline_mocks, pending_photo, result
+    ):
+        # Arrange
+        pipeline_mocks.process_with_ai.return_value = result
+
+        # Act
+        pixelpotion.process_pending_photo(SAMPLE_PHOTO_NAME)
+
+        # Assert
+        assert self.step() == ("failed", "brewing")
+
+    def test_telegram_failure_is_reported_against_sending(
+        self, pipeline_mocks, pending_photo
+    ):
+        # Arrange
+        pipeline_mocks.send_telegram_photo.return_value = False
+
+        # Act
+        pixelpotion.process_pending_photo(SAMPLE_PHOTO_NAME)
+
+        # Assert
+        assert self.step() == ("failed", "sending")
+
+    def test_a_new_step_clears_the_previous_failure(self, pipeline_mocks, pending_photo):
+        # Arrange
+        pixelpotion.fail_status("sending", "Telegram failed — kept in pending for retry")
+
+        # Act
+        pixelpotion.process_pending_photo(SAMPLE_PHOTO_NAME)
+
+        # Assert
+        assert self.step() == ("done", "")
+        assert set(pixelpotion.PIPELINE_STEPS) >= {"idle", "done", "failed"}

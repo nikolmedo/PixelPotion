@@ -53,9 +53,9 @@
         <div class="card">
             <h2><span class="icon">📊</span> Status</h2>
             <div class="status-bar">
-                <div class="status-chip">
+                <div class="status-chip" id="wifiChip">
                     <span class="dot {{ 'green' if wifi_connected else 'red' }}"></span>
-                    WiFi: {{ "Connected" if wifi_connected else "AP Mode" }}
+                    <span class="chip-text">WiFi: {{ "Connected" if wifi_connected else "AP Mode" }}</span>
                 </div>
                 <div class="status-chip">
                     <span class="dot {{ 'green' if gemini_ready else 'red' }}"></span>
@@ -66,6 +66,13 @@
                     Telegram
                 </div>
             </div>
+            <ol class="tracker" id="tracker" aria-label="Progress of the latest photo"
+                data-step="{{ status.step }}" data-failed-step="{{ status.failed_step }}">
+                <li data-step="capturing"><span class="tracker-name">Capture</span><span class="visually-hidden tracker-state"></span></li>
+                <li data-step="brewing"><span class="tracker-name">Brew</span><span class="visually-hidden tracker-state"></span></li>
+                <li data-step="sending"><span class="tracker-name">Send</span><span class="visually-hidden tracker-state"></span></li>
+                <li data-step="done"><span class="tracker-name">Delivered</span><span class="visually-hidden tracker-state"></span></li>
+            </ol>
             <p class="status-text {{ 'processing' if status.processing else '' }}" id="statusText" role="status" aria-live="polite">
                 {{ status.last_action }}
             </p>
