@@ -33,6 +33,7 @@
         .btn-outline{background:transparent;color:var(--text-dim);border:1px solid var(--border);}
         .btn-outline:hover{color:var(--text);border-color:var(--text-dim);}
         .btn:disabled{opacity:.5;cursor:not-allowed;}
+        .failed-badge{display:inline-block;margin-top:4px;background:rgba(225,112,85,.15);border:1px solid var(--red);color:var(--red);border-radius:6px;padding:2px 6px;font-size:.78em;}
         .pending-badge{background:var(--red);color:#fff;border-radius:10px;padding:2px 8px;font-size:.75em;font-weight:700;}
         .form-group{margin-bottom:14px;}
         .form-group label{display:block;font-size:.82em;font-weight:600;color:var(--text-dim);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px;}
@@ -135,6 +136,9 @@
                         <div class="photo-meta">
                             <span class="name">{{ photo.name }}</span>
                             {{ photo.date }} · {{ photo.size_kb }} KB
+                            {% if photo.failed_reason %}
+                            <span class="failed-badge">Failed: {{ photo.failed_reason }}</span>
+                            {% endif %}
                         </div>
                     </div>
                     <div class="photo-actions">

@@ -32,7 +32,7 @@ from constants import (
     DEFAULT_CONFIG,
     PHOTOS_PROCESSED,
 )
-from ai_provider import process_image
+from ai_provider import AIResult, process_image_result
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -450,19 +450,22 @@ def _release_camera(cam):
 # ---------------------------------------------------------------------------
 # AI processing
 # ---------------------------------------------------------------------------
-def process_with_ai(image_path, prompt=None):
+def process_with_ai(image_path, prompt=None) -> AIResult:
+    """Style one photo. Never raises: failures come back as a failed AIResult,
+    with `permanent` set when retrying cannot help."""
     api_key = config.get("gemini_api_key", "").strip()
     if not api_key:
         log.error("AI API key not configured")
-        return None
+        # Not permanent: the photo should go through once a key is saved.
+        return AIResult(reason="AI API key not configured")
     log.debug("AI processing: key length=%d", len(api_key))
     if prompt is None:
         prompt = get_active_prompt()
     try:
-        return process_image(image_path, prompt, api_key)
+        return process_image_result(image_path, prompt, api_key)
     except Exception as e:
         log.error("Error in AI processing: %s", e)
-        return None
+        return AIResult(reason=f"AI error: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -598,10 +601,14 @@ def update_photo_state(pending_path: Path, **changes) -> dict | None:
 def request_processing(pending_path: Path, style_id=None):
     """Prepare a pending photo for a manual (re)try from the portal.
 
-    A different style invalidates the styled image made with the old one.
+    Clears a permanent-failure mark (the user is explicitly asking to try
+    again), and a different style invalidates the styled image made with the
+    old one.
     """
     state = read_photo_state(pending_path)
     changes = {}
+    if state["failed"]:
+        changes.update(failed=False, failed_reason="")
     if style_id and style_id != state["style_id"]:
         changes.update(style_id=style_id, processed_path=None, telegram_styled_sent=False)
     if changes:
@@ -736,11 +743,19 @@ def process_pending_photo(filename) -> bool:
         processed = state["processed_path"]
         if not state["telegram_styled_sent"] and not (processed and Path(processed).is_file()):
             update_status(last_action=f"Adding potion ({style_name})...")
-            processed = process_with_ai(str(pending_path), prompt)
-            if not processed:
-                update_status(last_action="AI processing failed — kept in pending for retry")
+            result = process_with_ai(str(pending_path), prompt)
+            if not result.ok:
+                if result.permanent:
+                    # Retrying cannot help: auto-retry skips it from now on.
+                    update_photo_state(pending_path, failed=True, failed_reason=result.reason)
+                    update_status(last_action=f"Failed: {result.reason} — "
+                                              "kept in pending, retry it from the gallery")
+                else:
+                    update_status(last_action="AI processing failed — kept in pending for retry")
                 return True
-            update_photo_state(pending_path, processed_path=processed)
+            processed = result.path
+            if update_photo_state(pending_path, processed_path=processed) is None:
+                return False  # deleted from the gallery during the AI call
 
         update_status(last_action="Sending via Telegram...")
         if not state["telegram_original_sent"]:
@@ -805,6 +820,12 @@ def pending_photo_names() -> list[str]:
     return sorted(p.name for p in PHOTOS_PENDING.glob("*.jpg"))
 
 
+def retry_candidates() -> list[str]:
+    """Pending photos auto-retry may queue: every one not marked as failed."""
+    return [name for name in pending_photo_names()
+            if not read_photo_state(PHOTOS_PENDING / name)["failed"]]
+
+
 def auto_retry_loop():
     """Periodically queue photos that are still in PHOTOS_PENDING."""
     while True:
@@ -812,8 +833,9 @@ def auto_retry_loop():
         try:
             if not is_wifi_connected():
                 continue
-            # Each photo keeps the style it was captured with.
-            queued = sum(enqueue_pending(name) for name in pending_photo_names())
+            # Each photo keeps the style it was captured with; permanently
+            # failed photos wait for a manual retry from the gallery.
+            queued = sum(enqueue_pending(name) for name in retry_candidates())
             if queued:
                 log.info("Auto-retry: queued %d pending photo(s)", queued)
         except Exception as e:
@@ -1004,11 +1026,15 @@ def delete_style(style_id):
 @app.route("/gallery")
 def gallery():
     pending_photos = sorted(PHOTOS_PENDING.glob("*.jpg"), reverse=True)
-    pending_list = [{
-        "name": p.name,
-        "date": datetime.fromtimestamp(p.stat().st_mtime).strftime("%d/%m/%Y %H:%M"),
-        "size_kb": round(p.stat().st_size / 1024),
-    } for p in pending_photos]
+    pending_list = []
+    for p in pending_photos:
+        state = read_photo_state(p)
+        pending_list.append({
+            "name": p.name,
+            "date": datetime.fromtimestamp(p.stat().st_mtime).strftime("%d/%m/%Y %H:%M"),
+            "size_kb": round(p.stat().st_size / 1024),
+            "failed_reason": (state["failed_reason"] or "unknown error") if state["failed"] else "",
+        })
     return render_template(
         "gallery.html", photos=pending_list,
         wifi_connected=is_wifi_connected(), config=config,

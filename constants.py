@@ -20,6 +20,10 @@ GEMINI_MODELS = [
 
 MAX_RETRIES = 3
 
+# Upper bound for one backoff sleep, even when the API asks for longer
+# (Retry-After / retryDelay): the worker must not stall for minutes.
+MAX_RETRY_DELAY_SECONDS = 60
+
 # Timeout in milliseconds for HttpOptions. google-genai SDK uses ms.
 GEMINI_TIMEOUT_MS = 120_000
 
