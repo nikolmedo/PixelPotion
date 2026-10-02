@@ -161,14 +161,15 @@ Connect your phone to it and open **<http://192.168.4.1:8080>**.
 
 ### 4. Follow "Get started"
 
-The first page shows a **Get started** checklist. Do the steps in this order.
+The first page shows a **Get started** checklist, and each step links to the **Settings**
+tab, where all the forms live. Do the steps in this order.
 
 ![The Get started checklist on the PixelPotion camera page](docs/screenshots/first-run.png)
 
 **Gemini key.** Go to [aistudio.google.com/apikey](https://aistudio.google.com/apikey),
 create a key and copy it. The setup network has no internet, so switch your phone to mobile
-data for a minute to do this, then come back. Paste the key under **AI and Telegram** and
-save.
+data for a minute to do this, then come back. Paste the key under **AI and Telegram** on the
+**Settings** tab and save.
 
 **Telegram.**
 
@@ -181,7 +182,7 @@ save.
 
 For a group, add the bot to the group and use the group's chat ID (it starts with `-100`).
 
-**WiFi, last.** Under **WiFi**, tap **Find networks** or type your network name, enter the
+**WiFi, last.** On the **Settings** tab, under **WiFi**, tap **Find networks** or type your network name, enter the
 password and tap **Connect to WiFi**. The camera leaves setup mode, so your phone drops off
 `PixelPotion-Setup`. Reconnect your phone to your home WiFi and open
 **<http://pixelpotion.local:8080>**. If that address does not load, look up the camera's IP
@@ -209,7 +210,7 @@ you can try again.
   - The send button processes one photo, **Process all** processes all of them (both clear
     the failed mark), and you can pick another style before sending. You can also delete
     photos one by one or in bulk.
-- **Camera module:** under **AI and Telegram > Camera**, choose the module you installed.
+- **Camera module:** on the **Settings** tab, under **AI and Telegram > Camera**, choose the module you installed.
 
 ## Updating
 

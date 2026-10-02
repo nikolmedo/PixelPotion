@@ -84,6 +84,11 @@ main:focus { outline: none; }
 .nav a { flex: 1; display: flex; align-items: center; justify-content: center; gap: var(--s2); min-height: var(--tap); padding: var(--s1) var(--s2); color: var(--ink); text-decoration: none; font-size: .95rem; font-weight: 700; border-radius: var(--r-pill); transition: background-color var(--dur-1) var(--ease-ui); }
 .nav a:hover { background: var(--butter-soft); }
 .nav a[aria-current="page"] { background: var(--ink); color: var(--butter); }
+/* Four tabs on a narrow phone: icon above label, badge pinned to the corner */
+@media (max-width: 420px) {
+    .nav a { position: relative; flex-direction: column; gap: 2px; padding: var(--s1) 2px; font-size: .8rem; }
+    .nav .pending-badge { position: absolute; top: 2px; right: 4px; min-width: 20px; padding: 0 4px; font-size: .7rem; line-height: 16px; }
+}
 .pending-badge { min-width: 24px; padding: 0 6px; border: 2px solid var(--ink); border-radius: var(--r-pill); background: var(--bubblegum); color: var(--ink); font-size: .75rem; font-weight: 800; line-height: 20px; text-align: center; }
 .connection-banner { max-width: 568px; margin: var(--s3) auto 0; background: var(--ink); color: var(--butter); text-align: center; font-size: .9rem; font-weight: 700; padding: var(--s2) var(--s4); border-radius: var(--r-pill); }
 

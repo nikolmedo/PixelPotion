@@ -54,6 +54,7 @@ class TestSaveConfigRoute:
 
         # Assert
         assert response.status_code == 302
+        assert response.headers["Location"] == "/settings"
         assert pixelpotion.config["gemini_api_key"] == (
             "AIzaSyB9pQw2eRt5yUi8oPa1sDf4gHj7kLz0xCv"
         )
@@ -119,6 +120,7 @@ class TestSaveWifiRoute:
 
         # Assert
         assert response.status_code == 302
+        assert response.headers["Location"] == "/settings"
         assert pixelpotion.config["wifi_ssid"] == "CasaOlmedo_5G"
         assert ("error", "SSID cannot be empty.") in get_flashes(client)
         fake_thread.assert_not_called()
@@ -134,6 +136,7 @@ class TestSaveWifiRoute:
 
         # Assert
         assert response.status_code == 302
+        assert response.headers["Location"] == "/settings"
         assert pixelpotion.config["wifi_ssid"] == "FibraHogar-2.4G"
         assert pixelpotion.config["wifi_password"] == "mate&tostadas99"
         fake_thread.return_value.start.assert_called_once()
@@ -184,10 +187,10 @@ class TestSaveWifiRoute:
         fake_thread.assert_not_called()
 
 
-class TestIndexPage:
+class TestSettingsPage:
     def test_never_renders_stored_secrets(self, client):
         # Act
-        body = client.get("/").data
+        body = client.get("/settings").data
 
         # Assert — secrets stay server-side; non-secret settings still show.
         assert BASELINE_CONFIG["gemini_api_key"].encode() not in body
@@ -202,10 +205,18 @@ class TestIndexPage:
         pixelpotion.config["gemini_api_key"] = ""
 
         # Act
-        body = client.get("/").data
+        body = client.get("/settings").data
 
         # Assert
         assert b'placeholder="AIzaSy..."' in body
+
+    def test_camera_page_no_longer_renders_the_settings_forms(self, client):
+        # Act
+        body = client.get("/").get_data(as_text=True)
+
+        # Assert
+        assert 'action="/save_config"' not in body
+        assert 'action="/save_wifi"' not in body
 
 
 class TestCaptureRoute:
@@ -935,7 +946,7 @@ class TestCsrfProtection:
 
     def test_rendered_token_matches_session_token(self, plain_client):
         # Act
-        body = plain_client.get("/").get_data(as_text=True)
+        body = plain_client.get("/settings").get_data(as_text=True)
 
         # Assert — the page mints a token and embeds the one stored in the session.
         with plain_client.session_transaction() as session:
@@ -943,7 +954,7 @@ class TestCsrfProtection:
         assert f'name="csrf_token" value="{token}"' in body
         assert f'<meta name="csrf-token" content="{token}">' in body
 
-    @pytest.mark.parametrize("page", ["/", "/styles", "/gallery"])
+    @pytest.mark.parametrize("page", ["/settings", "/styles", "/gallery"])
     def test_every_form_carries_a_csrf_token(
         self, client, isolated_state, monkeypatch, page
     ):
@@ -1013,7 +1024,7 @@ class TestTemplateInjectionSafety:
         assert 'data-active-style="x&#34;&gt;&lt;script&gt;alert(1)&lt;/script&gt;"' in body
         assert "<script>alert(1)</script>" not in body
 
-    @pytest.mark.parametrize("page", ["/", "/styles", "/gallery"])
+    @pytest.mark.parametrize("page", ["/", "/styles", "/gallery", "/settings"])
     def test_pages_never_build_markup_with_inner_html(self, client, page):
         # Act
         body = client.get(page).get_data(as_text=True)
@@ -1033,7 +1044,7 @@ class TestTemplateInjectionSafety:
 
     def test_wifi_scan_results_are_inserted_as_text(self, client):
         # Act
-        source = client.get("/static/index.js").get_data(as_text=True)
+        source = client.get("/static/settings.js").get_data(as_text=True)
 
         # Assert — SSIDs are attacker-controlled; they must go through textContent.
         assert "item.textContent = ssid;" in source

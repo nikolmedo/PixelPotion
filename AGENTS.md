@@ -24,10 +24,10 @@ default_config.json     # Factory defaults: AP credentials, built-in styles, GPI
 config.json             # Runtime config (API keys, WiFi) — gitignored, created at runtime
 templates/base.html     # Shared layout: landmarks, nav, flash region, CSRF meta tag, footer version
 templates/_icons.html   # Inline SVG icon macro (no emoji, no icon fonts, no CDN)
-templates/              # index (camera + settings), styles (CRUD), gallery (pending queue)
+templates/              # index (camera), settings (keys, camera, WiFi), styles (CRUD), gallery (pending queue)
 static/app.css          # The whole portal stylesheet (no web fonts: AP mode has no internet)
 static/app.js           # Shared helpers (window.PP): CSRF-aware post(), submitForm(), toast(), pollStatus()
-static/{index,styles,gallery}.js  # One small script per page
+static/{index,settings,styles,gallery}.js  # One small script per page
 config/                 # hostapd/dnsmasq configs, systemd unit, sudoers whitelist — deployed by install.sh
 install.sh / update.sh  # Pi provisioning and GitHub-release auto-update (not unit-tested)
 uninstall.sh            # Removes a v3.x install (deployed); keeps photos/config unless --purge
@@ -47,9 +47,10 @@ All routes live in `app.py`. Every POST needs a CSRF token (see below).
 
 | Method | Path | Purpose | Response |
 | --- | --- | --- | --- |
-| GET | `/` | Camera page: Get started checklist, capture, settings, WiFi | HTML |
-| POST | `/save_config` | Save Gemini key, Telegram token/chat ID, camera module | Redirect + flash |
-| POST | `/save_wifi` | Save WiFi credentials, switch to WiFi in a background thread | Redirect + flash |
+| GET | `/` | Camera page: Get started checklist, status chips, style, capture | HTML |
+| GET | `/settings` | Settings page: Gemini key, Telegram, camera module, WiFi | HTML |
+| POST | `/save_config` | Save Gemini key, Telegram token/chat ID, camera module | Redirect to `/settings` + flash |
+| POST | `/save_wifi` | Save WiFi credentials, switch to WiFi in a background thread | Redirect to `/settings` + flash |
 | POST | `/capture` | Capture to pending and enqueue (form field `style_id`) | JSON `{ok, message, filename}` or `{ok: false, error}` |
 | POST | `/set_active_style` | Set the active style (JSON body `{style_id}`) | JSON `{ok, active_style_id}` |
 | GET | `/styles` | Styles page | HTML |

@@ -13,7 +13,9 @@ import pytest
 import app as pixelpotion
 from conftest import REPO_ROOT, make_jpeg_bytes
 
-PAGES = {"/": "Capture", "/styles": "Styles", "/gallery": "Gallery"}
+PAGES = {
+    "/": "Capture", "/styles": "Styles", "/gallery": "Gallery", "/settings": "Settings",
+}
 STATIC_DIR = REPO_ROOT / "static"
 
 
@@ -178,9 +180,12 @@ class TestSetupFlow:
 
         # Assert
         assert "Get started" in body
-        for anchor in ("#gemini", "#telegram", "#wifi"):
-            assert parsed.find("a", href=anchor), anchor
-            assert anchor[1:] in {attrs.get("id") for _, attrs in parsed.tags}, anchor
+        settings = PageAudit()
+        settings.feed(client.get("/settings").get_data(as_text=True))
+        settings_ids = {attrs.get("id") for _, attrs in settings.tags}
+        for anchor in ("gemini", "telegram", "wifi"):
+            assert parsed.find("a", href=f"/settings#{anchor}"), anchor
+            assert anchor in settings_ids, anchor
         assert body.count("To do:") == 3
         assert "/newbot" in body
         assert "mobile data" in body
@@ -208,7 +213,7 @@ class TestSetupFlow:
 
     def test_wifi_settings_come_after_the_keys(self, client):
         # Act
-        body = client.get("/").get_data(as_text=True)
+        body = client.get("/settings").get_data(as_text=True)
 
         # Assert
         assert body.index('action="/save_config"') < body.index('action="/save_wifi"')
@@ -218,19 +223,29 @@ class TestSetupFlow:
         pixelpotion.config["ap_ssid"] = "PixelPotion-Kitchen"
 
         # Act
-        body = client.get("/").get_data(as_text=True)
-        notice = audit(client, "/").find("div", id="wifiNotice")
+        body = client.get("/settings").get_data(as_text=True)
+        notice = audit(client, "/settings").find("div", id="wifiNotice")
 
         # Assert — shown by script before the first submit, never as alert().
         assert notice and "hidden" in notice[0]
         assert "Your phone will disconnect from" in body
         assert "PixelPotion-Kitchen" in body
         assert "http://pixelpotion.local:8080" in body
-        assert "alert(" not in (STATIC_DIR / "index.js").read_text(encoding="utf-8")
+        assert "alert(" not in (STATIC_DIR / "settings.js").read_text(encoding="utf-8")
+
+    def test_camera_script_leaves_the_settings_widgets_to_the_settings_script(self):
+        # Act
+        camera = (STATIC_DIR / "index.js").read_text(encoding="utf-8")
+        settings = (STATIC_DIR / "settings.js").read_text(encoding="utf-8")
+
+        # Assert — these elements only exist on /settings, so a lookup on / would be null.
+        for needle in ("wifiForm", "scanWifiBtn", "toggle-secret"):
+            assert needle not in camera, needle
+            assert needle in settings, needle
 
     def test_every_secret_field_has_a_show_hide_toggle(self, client):
         # Act
-        parsed = audit(client, "/")
+        parsed = audit(client, "/settings")
 
         # Assert
         secret_ids = {a["id"] for a in parsed.find("input", type="password")}
@@ -247,7 +262,7 @@ class TestSetupFlow:
     ])
     def test_credential_fields_disable_phone_autocorrect(self, client, field):
         # Act
-        (attrs,) = audit(client, "/").find("input", name=field)
+        (attrs,) = audit(client, "/settings").find("input", name=field)
 
         # Assert
         assert attrs["autocapitalize"] == "none"
@@ -301,7 +316,7 @@ def a11y(client, page) -> A11yAudit:
 
 
 class TestAccessibility:
-    @pytest.mark.parametrize("page", PAGES)
+    @pytest.mark.parametrize("page", [p for p in PAGES if p != "/"])
     def test_every_form_control_has_an_accessible_name(self, client, full_pages, page):
         # Act
         parsed = a11y(client, page)
