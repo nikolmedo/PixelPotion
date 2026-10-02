@@ -12,7 +12,7 @@ to per-test temporary locations by the autouse `isolated_state` fixture.
 
 Deliberately NOT unit-tested — infinite loops and pure hardware/OS glue whose
 tests would couple to implementation details without protecting refactors:
-auto_retry_loop, gpio_button_listener, start_ap_mode, main.
+auto_retry_loop, gpio_button_listener, main.
 """
 
 import copy
@@ -83,6 +83,28 @@ BASELINE_CONFIG = {
 }
 
 SAMPLE_PHOTO_NAME = "photo_20260610_143052.jpg"
+
+SUDOERS_PATH = REPO_ROOT / "config" / "pixelpotion.sudoers"
+
+
+def load_sudoers_commands(path: Path = SUDOERS_PATH) -> list[str]:
+    """Return the command lines listed in the sudoers Cmnd_Alias, in order."""
+    logical_lines, pending = [], ""
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not pending and (not line or line.startswith("#")):
+            continue
+        if line.endswith("\\"):
+            pending += line[:-1] + " "
+            continue
+        logical_lines.append(pending + line)
+        pending = ""
+    commands = []
+    for line in logical_lines:
+        if line.startswith("Cmnd_Alias"):
+            _, _, body = line.partition("=")
+            commands.extend(" ".join(part.split()) for part in body.split(","))
+    return commands
 
 
 def make_jpeg_bytes(color=(120, 80, 200), size=(32, 32)) -> bytes:
