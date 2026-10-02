@@ -316,13 +316,15 @@ def a11y(client, page) -> A11yAudit:
 
 
 class TestAccessibility:
-    @pytest.mark.parametrize("page", [p for p in PAGES if p != "/"])
+    @pytest.mark.parametrize("page", PAGES)
     def test_every_form_control_has_an_accessible_name(self, client, full_pages, page):
         # Act
         parsed = a11y(client, page)
 
-        # Assert
-        assert parsed.controls
+        # Assert — the Camera page has only buttons (checked below), but any
+        # field added to it later must be named too.
+        if page != "/":
+            assert parsed.controls
         for attrs in parsed.controls:
             named = (attrs.get("id") in parsed.label_for or attrs.get("aria-label"))
             assert named, attrs
