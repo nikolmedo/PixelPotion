@@ -6,6 +6,7 @@ Captures photos, transforms them with Gemini AI, and delivers them via Telegram.
 
 import os
 import sys
+import copy
 import hmac
 import json
 import time
@@ -58,25 +59,67 @@ for d in [PHOTOS_ORIGINAL, PHOTOS_PROCESSED, PHOTOS_PENDING]:
 # ---------------------------------------------------------------------------
 # Configuration helpers
 # ---------------------------------------------------------------------------
+# Guards every read-modify-write of `config` and every write of config.json.
+# Re-entrant so a route holding it can still call save_config().
+config_lock = threading.RLock()
+
+
 def load_config() -> dict:
-    if CONFIG_PATH.exists():
-        with open(CONFIG_PATH) as f:
+    """Merge config.json over the factory defaults.
+
+    A corrupt or truncated config.json (for example after a power cut on an
+    old install) is moved aside as `config.json.corrupt-<timestamp>` and the
+    app starts from defaults instead of crash-looping.
+    """
+    cfg = copy.deepcopy(DEFAULT_CONFIG)
+    if not CONFIG_PATH.exists():
+        return cfg
+    try:
+        with open(CONFIG_PATH, encoding="utf-8") as f:
             saved = json.load(f)
-        cfg = {**DEFAULT_CONFIG, **saved}
-        if not cfg.get("styles"):
-            cfg["styles"] = DEFAULT_CONFIG["styles"]
-        if not cfg.get("active_style_id"):
-            cfg["active_style_id"] = cfg["styles"][0]["id"] if cfg["styles"] else "pixar"
-    else:
-        cfg = DEFAULT_CONFIG.copy()
+        if not isinstance(saved, dict):
+            raise ValueError(f"expected a JSON object, got {type(saved).__name__}")
+    except (ValueError, UnicodeDecodeError) as e:
+        backup = CONFIG_PATH.with_name(
+            f"{CONFIG_PATH.name}.corrupt-{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        )
+        try:
+            os.replace(CONFIG_PATH, backup)
+            log.error("config.json is unreadable (%s); moved it to %s and loaded defaults",
+                      e, backup.name)
+        except OSError as move_error:
+            log.error("config.json is unreadable (%s) and could not be moved aside: %s",
+                      e, move_error)
+        return cfg
+    cfg.update(saved)
+    if not cfg.get("styles"):
+        cfg["styles"] = copy.deepcopy(DEFAULT_CONFIG["styles"])
+    if not cfg.get("active_style_id"):
+        cfg["active_style_id"] = cfg["styles"][0]["id"] if cfg["styles"] else "pixar"
     return cfg
 
 
 def save_config(cfg: dict):
-    with open(CONFIG_PATH, "w") as f:
-        json.dump(cfg, f, indent=2, ensure_ascii=False)
-    # config.json holds API keys and the WiFi password: owner-only access.
-    os.chmod(CONFIG_PATH, 0o600)
+    """Write config.json atomically: a crash leaves either the old or the new file.
+
+    The data goes to a temporary file in the same directory, is flushed to
+    disk, and then replaces config.json in one rename.
+    """
+    with config_lock:
+        tmp_path = CONFIG_PATH.with_name(f".{CONFIG_PATH.name}.tmp")
+        try:
+            # config.json holds API keys and the WiFi password: owner-only
+            # access from the moment the file exists.
+            fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, indent=2, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, CONFIG_PATH)
+        except BaseException:
+            tmp_path.unlink(missing_ok=True)
+            raise
+        os.chmod(CONFIG_PATH, 0o600)
 
 
 def get_active_prompt() -> str:
@@ -352,6 +395,7 @@ CAMERA_PROFILES = {
 
 def capture_photo() -> str | None:
     with camera_lock:
+        cam = None
         try:
             from picamera2 import Picamera2
             available = Picamera2.global_camera_info()
@@ -373,13 +417,27 @@ def capture_photo() -> str | None:
             time.sleep(2)
             filepath = str(PHOTOS_ORIGINAL / filename)
             cam.capture_file(filepath)
-            cam.stop()
-            cam.close()
             log.info("Photo captured: %s", filepath)
             return filepath
         except Exception as e:
             log.error("Error capturing photo: %s", e)
             return None
+        finally:
+            if cam is not None:
+                _release_camera(cam)
+
+
+def _release_camera(cam):
+    """Stop and close the camera; a failing stop() must not skip close().
+
+    A handle left open keeps libcamera busy and makes every later capture
+    fail until the service restarts.
+    """
+    for step in ("stop", "close"):
+        try:
+            getattr(cam, step)()
+        except Exception as e:
+            log.warning("Camera %s() failed during cleanup: %s", step, e)
 
 
 # ---------------------------------------------------------------------------
@@ -631,15 +689,16 @@ def index():
 def save_config_route():
     # Secrets are never rendered back into the form, so a blank field means
     # "keep the stored value".
-    for secret in ("gemini_api_key", "telegram_bot_token"):
-        submitted = request.form.get(secret, "").strip()
-        if submitted:
-            config[secret] = submitted
-    config["telegram_chat_id"] = request.form.get("telegram_chat_id", "").strip()
-    module = request.form.get("camera_module", "").strip()
-    if module in CAMERA_PROFILES:
-        config["camera_module"] = module
-    save_config(config)
+    with config_lock:
+        for secret in ("gemini_api_key", "telegram_bot_token"):
+            submitted = request.form.get(secret, "").strip()
+            if submitted:
+                config[secret] = submitted
+        config["telegram_chat_id"] = request.form.get("telegram_chat_id", "").strip()
+        module = request.form.get("camera_module", "").strip()
+        if module in CAMERA_PROFILES:
+            config["camera_module"] = module
+        save_config(config)
     flash("Configuration saved.", "success")
     return redirect(url_for("index"))
 
@@ -658,15 +717,17 @@ def save_wifi_route():
     if not (is_valid_wifi_credential(ssid) and is_valid_wifi_credential(password)):
         flash("SSID and password cannot contain quotes or line breaks.", "error")
         return redirect(url_for("index"))
-    config["wifi_ssid"] = ssid
-    config["wifi_password"] = password
-    save_config(config)
+    with config_lock:
+        config["wifi_ssid"] = ssid
+        config["wifi_password"] = password
+        save_config(config)
     flash(f"Connecting to {ssid}...", "info")
 
     def async_connect():
         success = connect_wifi(ssid, password)
-        config["wifi_connected"] = success
-        save_config(config)
+        with config_lock:
+            config["wifi_connected"] = success
+            save_config(config)
         if not success:
             start_ap_mode()
 
@@ -680,8 +741,9 @@ def capture_route():
     style_id = request.form.get("style_id", config.get("active_style_id", ""))
     if status["processing"]:
         return jsonify({"ok": False, "error": "A process is already running."})
-    config["active_style_id"] = style_id
-    save_config(config)
+    with config_lock:
+        config["active_style_id"] = style_id
+        save_config(config)
     threading.Thread(target=full_pipeline, kwargs={"style_id": style_id}, daemon=True).start()
     return jsonify({"ok": True, "message": "Capture started..."})
 
@@ -691,8 +753,9 @@ def set_active_style():
     data = request.get_json() or {}
     style_id = data.get("style_id", "")
     if style_id:
-        config["active_style_id"] = style_id
-        save_config(config)
+        with config_lock:
+            config["active_style_id"] = style_id
+            save_config(config)
     return jsonify({"ok": True, "active_style_id": config["active_style_id"]})
 
 
@@ -715,8 +778,9 @@ def add_style():
         flash("Name and prompt are required.", "error")
         return redirect(url_for("styles_page"))
     style_id = f"custom_{uuid.uuid4().hex[:8]}"
-    config.setdefault("styles", []).append({"id": style_id, "name": name, "prompt": prompt})
-    save_config(config)
+    with config_lock:
+        config.setdefault("styles", []).append({"id": style_id, "name": name, "prompt": prompt})
+        save_config(config)
     flash(f"Style '{name}' created.", "success")
     return redirect(url_for("styles_page"))
 
@@ -728,22 +792,24 @@ def edit_style(style_id):
     if not name or not prompt:
         flash("Name and prompt are required.", "error")
         return redirect(url_for("styles_page"))
-    for s in config.get("styles", []):
-        if s["id"] == style_id:
-            s["name"] = name
-            s["prompt"] = prompt
-            break
-    save_config(config)
+    with config_lock:
+        for s in config.get("styles", []):
+            if s["id"] == style_id:
+                s["name"] = name
+                s["prompt"] = prompt
+                break
+        save_config(config)
     flash(f"Style '{name}' updated.", "success")
     return redirect(url_for("styles_page"))
 
 
 @app.route("/delete_style/<style_id>", methods=["POST"])
 def delete_style(style_id):
-    config["styles"] = [s for s in config.get("styles", []) if s["id"] != style_id]
-    if config.get("active_style_id") == style_id:
-        config["active_style_id"] = config["styles"][0]["id"] if config["styles"] else ""
-    save_config(config)
+    with config_lock:
+        config["styles"] = [s for s in config.get("styles", []) if s["id"] != style_id]
+        if config.get("active_style_id") == style_id:
+            config["active_style_id"] = config["styles"][0]["id"] if config["styles"] else ""
+        save_config(config)
     flash("Style deleted.", "success")
     return redirect(url_for("styles_page"))
 
@@ -889,9 +955,10 @@ def scan_wifi():
 # Main
 # ---------------------------------------------------------------------------
 def main():
-    global config
-    config = load_config()
-    save_config(config)
+    with config_lock:
+        config.clear()
+        config.update(load_config())
+        save_config(config)
     log.info("=== PixelPotion starting ===")
 
     if config.get("wifi_ssid"):
