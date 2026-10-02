@@ -6,6 +6,17 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- New look for the web portal: a bright, playful design with sticker-style controls and
+  bolder, rounder type.
+- The Camera page shows each photo "brewing" in a potion bottle that fills as it is
+  captured, restyled and sent; the cork pops when it is delivered and the potion turns red
+  if something fails.
+- Buttons, style choices, gallery photos and the photo preview now animate in response to
+  taps. All motion turns off when the phone asks for reduced motion.
+- The status message no longer starts with an emoji.
+
 ## [3.0.0] - 2026-10-02
 
 Installs from v2.0.2 or earlier must run `install.sh` once from a fresh clone; after that,

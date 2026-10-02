@@ -10,10 +10,22 @@
     // in the background and never blocks a new capture.
     let isCapturing = captureCard.dataset.capturing === 'true';
 
+    // A one-shot animation: (re)start it by adding a class, and drop the
+    // class once the longest part of it has finished.
+    function playOnce(el, className, ms) {
+        el.classList.remove(className);
+        void el.offsetWidth;
+        el.classList.add(className);
+        clearTimeout(el._playTimer);
+        el._playTimer = setTimeout(() => el.classList.remove(className), ms);
+    }
+
     function selectStyle(id) {
         selectedStyle = id;
         document.querySelectorAll('.style-pill').forEach(p => {
-            p.setAttribute('aria-pressed', String(p.dataset.id === id));
+            const chosen = p.dataset.id === id;
+            p.setAttribute('aria-pressed', String(chosen));
+            if (chosen) playOnce(p, 'stamp', 450);
         });
         // Persist for the GPIO button.
         PP.post('/set_active_style', {style_id: id})
@@ -28,7 +40,7 @@
         if (isCapturing) return;
         captureBtn.disabled = true;
         isCapturing = true;
-        PP.toast('Capturing...');
+        PP.toast('Taking photo...');
 
         const formData = new FormData();
         formData.append('style_id', selectedStyle);
@@ -110,13 +122,15 @@
     }
     document.getElementById('scanWifiBtn').addEventListener('click', scanWifi);
 
-    // Progress tracker: Capture -> Brew -> Send -> Delivered.
+    // Progress: the step list (text) and the potion bottle (picture) both
+    // follow `step`: Capture -> Brew -> Send -> Delivered.
     const TRACKER_ORDER = ['capturing', 'brewing', 'sending', 'done'];
     const STATE_TEXT = {
         done: 'done', active: 'in progress', failed: 'failed',
         waiting: 'waiting for WiFi', todo: 'not started',
     };
     const tracker = document.getElementById('tracker');
+    const potion = document.getElementById('potion');
 
     function trackerStates(step, failedStep) {
         switch (step) {
@@ -134,8 +148,20 @@
         }
     }
 
+    // The cork pop and the failure wobble answer a change of step, so they
+    // play only when the step moves there, never on page load.
+    function renderPotion(step, failedStep) {
+        const previous = potion.dataset.step;
+        potion.dataset.step = step;
+        potion.dataset.failedStep = failedStep || '';
+        if (step === previous) return;
+        if (step === 'done') playOnce(potion, 'just-done', 900);
+        if (step === 'failed') playOnce(potion, 'just-failed', 600);
+    }
+
     function renderTracker(step, failedStep) {
         tracker.dataset.step = step;
+        renderPotion(step, failedStep);
         const states = trackerStates(step, failedStep);
         tracker.querySelectorAll('li').forEach((li, i) => {
             li.dataset.state = states[i];

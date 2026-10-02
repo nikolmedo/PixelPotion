@@ -405,17 +405,21 @@ def contrast_ratio(foreground: str, background: str) -> float:
 
 # Every text colour paired with each background it is drawn on.
 TEXT_PAIRS = [
-    ("paper", "ink"), ("paper", "ink-raised"), ("paper", "ink-well"),
-    ("paper-dim", "ink"), ("paper-dim", "ink-raised"), ("paper-dim", "ink-well"),
-    ("safelight-text", "ink"), ("safelight-text", "ink-raised"),
-    ("on-paper", "paper"), ("on-safelight", "safelight"),
-    ("on-verdigris", "verdigris"), ("on-amber", "amber"),
+    ("ink", "butter"), ("ink", "butter-soft"), ("ink", "paper"),
+    ("ink-soft", "butter"), ("ink-soft", "paper"), ("ink-soft", "butter-soft"),
+    ("ink", "bubblegum"), ("ink", "potion"), ("ink", "sky"),
+    ("butter", "ink"), ("paper", "tomato-deep"), ("tomato-deep", "paper"),
+    ("tomato-deep", "butter"),
 ]
-# Borders and markers that identify controls or states need 3:1.
+# Outlines, focus rings and state markers need 3:1. Fills such as the
+# potion or bubblegum stickers always sit inside an ink outline, so the
+# outline is what has to stand out from the page and the card.
 UI_PAIRS = [
-    ("line-strong", "ink-raised"), ("paper-dim", "ink"),
-    ("verdigris", "ink-raised"), ("amber", "ink-raised"), ("focus", "ink"),
+    ("ink", "butter"), ("ink", "paper"), ("focus", "butter"), ("focus", "paper"),
+    ("tomato", "paper"), ("tomato-deep", "paper"),
 ]
+# Colours that must never carry text: they fail 4.5:1 against every surface.
+NEVER_TEXT = ["tomato", "potion-deep"]
 
 
 class TestColourContrast:
@@ -441,12 +445,40 @@ class TestColourContrast:
         # Assert
         assert ratio >= 3.0, f"--{foreground} on --{background}: {ratio:.2f}"
 
-    def test_reduced_motion_is_respected(self):
+    @pytest.mark.parametrize("token", NEVER_TEXT)
+    def test_low_contrast_colours_are_too_weak_for_text(self, token):
+        # Arrange — guards the comment in app.css: if these ever pass 4.5:1
+        # the palette changed and the pairs above need a fresh look.
+        tokens = css_tokens()
+
         # Act
-        css = (STATIC_DIR / "app.css").read_text(encoding="utf-8")
+        best = max(contrast_ratio(tokens[token], tokens[bg])
+                   for bg in ("butter", "paper", "ink"))
 
         # Assert
-        assert "@media (prefers-reduced-motion: reduce)" in css
+        assert best < 4.5
+
+    def test_reduced_motion_stops_animations_and_transitions(self):
+        # Arrange
+        css = (STATIC_DIR / "app.css").read_text(encoding="utf-8")
+
+        # Act
+        block = css[css.index("@media (prefers-reduced-motion: reduce)"):]
+
+        # Assert — loops (bubbles, slosh) and transforms in motion all stop.
+        assert "animation: none !important" in block
+        assert "transition: none !important" in block
+
+    def test_motion_uses_the_shared_tokens(self):
+        # Arrange
+        css = (STATIC_DIR / "app.css").read_text(encoding="utf-8")
+
+        # Act
+        root = re.search(r":root\s*\{(.*?)\}", css, re.S).group(1)
+
+        # Assert
+        for token in ("--ease-pop", "--ease-ui", "--dur-1", "--dur-2", "--dur-3"):
+            assert token in root, token
 
     def test_contrast_maths_matches_the_wcag_reference(self):
         # Act / Assert — black on white is the 21:1 maximum.
@@ -531,7 +563,8 @@ class TestVisualIdentity:
     EMOJI = re.compile("[\U0001F300-\U0001FAFF☀-➿️]")
 
     @pytest.mark.parametrize("path", sorted(
-        list((REPO_ROOT / "templates").glob("*.html")) + list(STATIC_DIR.glob("*.js")),
+        list((REPO_ROOT / "templates").glob("*.html")) + list(STATIC_DIR.glob("*.js"))
+        + list(STATIC_DIR.glob("*.css")),
         key=lambda p: p.name,
     ), ids=lambda p: p.name)
     def test_ui_chrome_uses_svg_icons_not_emoji(self, path):
@@ -547,11 +580,67 @@ class TestVisualIdentity:
 
         # Assert — no web fonts: the access point has no internet.
         assert "@font-face" not in css and "@import" not in css
-        assert "ui-serif" in css and "ui-monospace" in css
+        assert "ui-rounded" in css and "system-ui" in css
 
-    def test_capture_button_is_the_round_shutter(self, client):
+    def test_capture_button_is_the_labelled_shutter(self, client):
         # Act
         body = client.get("/").get_data(as_text=True)
+        parsed = a11y(client, "/")
+        (shutter,) = [(a, t) for a, t in parsed.buttons if a.get("id") == "captureBtn"]
+
+        # Assert — the visible label is the accessible name (no aria-label
+        # that could drift from it).
+        assert re.search(r'class="capture-btn"[^>]*>\s*<span class="shutter-core"><svg', body)
+        assert shutter[1] == "Take photo"
+        assert "aria-label" not in shutter[0]
+
+
+class TestPotionBottle:
+    """The bottle on the Camera page pictures the pipeline step."""
+
+    BOTTLE_STEPS = ("capturing", "queued", "brewing", "sending", "done",
+                    "failed", "waiting_wifi")
+
+    def test_bottle_starts_from_the_current_pipeline_step(self, client):
+        # Arrange
+        pixelpotion.fail_status("brewing", "Gemini error 500 — kept in pending for retry")
+
+        # Act
+        (potion,) = audit(client, "/").find("div", id="potion")
 
         # Assert
-        assert re.search(r'class="capture-btn"[^>]*>\s*<span class="shutter-core"><svg', body)
+        assert potion["data-step"] == "failed"
+        assert potion["data-failed-step"] == "brewing"
+
+    def test_bottle_is_decorative_and_its_steps_are_text(self, client):
+        # Act
+        parsed = audit(client, "/")
+        (svg,) = [a for t, a in parsed.tags if t == "svg" and "bottle" in a.get("class", "")]
+
+        # Assert — screen readers get the step list and status line instead.
+        assert svg["aria-hidden"] == "true"
+        assert parsed.find("ol", id="tracker")
+        assert parsed.find("p", id="statusText")
+
+    @pytest.mark.parametrize("step", BOTTLE_STEPS)
+    def test_every_bottle_step_has_a_look(self, step):
+        # Arrange
+        css = (STATIC_DIR / "app.css").read_text(encoding="utf-8")
+
+        # Act / Assert
+        assert f'.potion[data-step="{step}"]' in css
+
+    def test_bottle_steps_are_real_pipeline_steps(self):
+        # Act / Assert
+        assert set(self.BOTTLE_STEPS) <= set(pixelpotion.PIPELINE_STEPS)
+
+    def test_script_keeps_the_bottle_in_step_with_the_status(self):
+        # Arrange
+        source = (STATIC_DIR / "index.js").read_text(encoding="utf-8")
+
+        # Act
+        render = re.search(r"function renderPotion\(.*?\n    \}", source, re.S).group(0)
+
+        # Assert — celebratory motion only answers a change of step.
+        assert "potion.dataset.step = step" in render
+        assert "step === previous" in render

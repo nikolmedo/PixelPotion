@@ -4,7 +4,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="color-scheme" content="dark">
+    <meta name="color-scheme" content="light">
+    <meta name="theme-color" content="#FFE14D">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>PixelPotion - {% block title %}{% endblock %}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
@@ -12,7 +13,7 @@
 <body data-page="{{ request.endpoint }}">
     <a class="skip-link" href="#main">Skip to content</a>
     <header class="header">
-        <a class="brand" href="/">{{ icon("flask", 28) }}<span>PixelPotion</span></a>
+        <a class="brand" href="/"><span class="brand-mark">{{ icon("flask", 24) }}</span><span class="brand-word">PixelPotion</span></a>
         <p class="tagline">{% block subtitle %}Photos, restyled by AI, delivered to Telegram{% endblock %}</p>
     </header>
 
@@ -30,7 +31,7 @@
         {% endfor %}
     </nav>
     <div class="connection-banner" id="connectionBanner" role="status" aria-live="polite" hidden>
-        Connection lost — retrying…
+        Can't reach the camera. Trying again…
     </div>
 
     <main class="container" id="main" tabindex="-1">

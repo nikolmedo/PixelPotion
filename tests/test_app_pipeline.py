@@ -256,7 +256,7 @@ class TestProcessPendingPhoto:
             (pipeline_mocks.processed_path, "🎨 Style: Pixar 3D"),
         ]
         assert list(isolated_state.pending.iterdir()) == []
-        assert pixelpotion.status["last_action"].startswith("✅ Done")
+        assert pixelpotion.status["last_action"].startswith("Done (")
         assert pixelpotion.status["processing"] is False
 
     def test_without_wifi_photo_stays_pending_and_ai_is_skipped(

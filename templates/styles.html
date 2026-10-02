@@ -5,7 +5,7 @@
 
 {% block content %}
         <!-- Existing styles, shown as labels on a shelf -->
-        <section class="card" aria-labelledby="shelfTitle">
+        <section class="shelf" aria-labelledby="shelfTitle">
             <h2 id="shelfTitle">{{ icon("palette") }} Your styles <span class="count">{{ styles|length }}</span></h2>
 
             {% if styles|length == 0 %}
@@ -22,7 +22,7 @@
                     <button type="button" class="style-header" aria-expanded="false"
                             aria-controls="style-body-{{ loop.index }}">
                         <span class="name">{{ style.name }}</span>
-                        {% if style.id == active_style_id %}<span class="badge">In use</span>{% endif %}
+                        {% if style.id == active_style_id %}<span class="badge">{{ icon("check", 14) }} In use</span>{% endif %}
                         <span class="toggle-icon">{{ icon("chevron") }}</span>
                     </button>
                 </h3>
@@ -90,7 +90,7 @@
         </section>
 
         <!-- Tips -->
-        <section class="card" aria-labelledby="tipsTitle">
+        <section class="card tips-note" aria-labelledby="tipsTitle">
             <h2 id="tipsTitle">{{ icon("lightbulb") }} Writing a good prompt</h2>
             <ul class="tips">
                 <li>Start with <code>TASK: Transform this photograph into...</code></li>

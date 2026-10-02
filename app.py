@@ -793,7 +793,7 @@ def process_pending_photo(filename) -> bool:
             update_photo_state(pending_path, telegram_styled_sent=True)
 
         remove_from_pending(pending_path)
-        update_status(step="done", last_action=f"✅ Done ({style_name}): {name}")
+        update_status(step="done", last_action=f"Done ({style_name}): {name}")
         return True
     except Exception as e:
         current = status_snapshot()["step"]
