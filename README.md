@@ -50,15 +50,19 @@ No WiFi at the moment? Photos wait in an offline queue and get processed automat
 ## 🚀 Quick Start
 
 ```bash
-# 1. Flash Raspberry Pi OS Lite (64-bit), enable SSH, then on the Pi:
+# 1. Flash Raspberry Pi OS Lite (64-bit) with a user named "pi", enable SSH, then on the Pi:
 git clone https://github.com/nikolmedo/PixelPotion /home/pi/pixelpotion-install
 cd /home/pi/pixelpotion-install
-sudo bash install.sh
+sudo bash install.sh        # prints this device's access point password at the end
 sudo reboot
 
-# 2. Connect to the "PixelPotion-Setup" WiFi (password: pixelpotion123)
+# 2. Connect to the "PixelPotion-Setup" WiFi with the password install.sh printed
 # 3. Open http://192.168.4.1:8080 and configure WiFi, Gemini & Telegram
 ```
+
+> **Known limitation:** the installer requires a `pi` user with home `/home/pi`.
+> Recent Raspberry Pi OS images no longer create it by default — set the username
+> to `pi` in Raspberry Pi Imager. `install.sh` stops with a clear error otherwise.
 
 <details>
 <summary><b>🔌 Hardware wiring (camera & button)</b></summary>
@@ -137,7 +141,11 @@ sudo bash install.sh
 sudo reboot
 ```
 
-The script updates packages, installs all dependencies (Python, camera, GPIO), configures `hostapd`/`dnsmasq` for the access point, and enables the `pixelpotion` systemd service.
+The script installs the system packages (camera, GPIO, `hostapd`/`dnsmasq`), copies the app to `/home/pi/pixelpotion`, creates its Python virtual environment (`/home/pi/pixelpotion/venv`), configures the access point, and enables the `pixelpotion` systemd service. It does not upgrade the whole system unless you pass `--upgrade-system`.
+
+At the end it prints the **access point password**. It is generated randomly for each device (stored in `/etc/hostapd/hostapd.conf`), so write it down. Re-running `install.sh` keeps that password, your `config.json`, and your photos.
+
+The service runs as the unprivileged `pi` user. The few network commands it needs as root (switching between WiFi and access point mode, scanning networks) are whitelisted one by one in `/etc/sudoers.d/pixelpotion`.
 
 </details>
 
@@ -149,7 +157,7 @@ The script updates packages, installs all dependencies (Python, camera, GPIO), c
 | Field | Value |
 | --- | --- |
 | **Network name** | `PixelPotion-Setup` |
-| **Password** | `pixelpotion123` |
+| **Password** | printed by `install.sh` (show it again with `sudo grep wpa_passphrase /etc/hostapd/hostapd.conf`) |
 
 ### 2. Open the web portal
 
@@ -232,7 +240,9 @@ libcamera-still -o test.jpg                        # test the camera manually
 hostname -I                                        # check current IP
 ```
 
-The update script checks GitHub for a newer release, backs up `config.json`, replaces the code, reinstalls dependencies in the venv, and restarts the service.
+The update script checks GitHub for a newer release, backs up `config.json`, replaces the code (the files listed in `deploy-files.txt`), refreshes the sudo whitelist and the service unit, reinstalls dependencies in the venv, and restarts the service.
+
+> **Upgrading from v2.0.2 or earlier:** older installs have no `update.sh` in `/home/pi/pixelpotion` and run the service as root. Upgrade once by re-running the installer from a fresh clone (`git clone ...` then `sudo bash install.sh`); after that, `update.sh` works as described above.
 
 </details>
 
@@ -261,7 +271,7 @@ The update script checks GitHub for a newer release, backs up `config.json`, rep
 
 - Wait 30–60 seconds after boot
 - If the network doesn't appear, reboot the Pi
-- Network: `PixelPotion-Setup`, password: `pixelpotion123`
+- Network: `PixelPotion-Setup`, password: the one `install.sh` printed (`sudo grep wpa_passphrase /etc/hostapd/hostapd.conf`)
 
 ### Web portal won't load
 

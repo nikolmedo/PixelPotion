@@ -25,6 +25,7 @@ config.json             # Runtime config (API keys, WiFi) — gitignored, create
 templates/              # Jinja2 templates: index (portal), styles (CRUD), gallery (pending queue)
 config/                 # hostapd/dnsmasq configs, systemd unit, sudoers whitelist — deployed by install.sh
 install.sh / update.sh  # Pi provisioning and GitHub-release auto-update (not unit-tested)
+deploy-files.txt        # Runtime files both scripts copy to the Pi — single source of truth
 tests/                  # Pytest suite — see "Testing" below
 ```
 
@@ -145,8 +146,14 @@ python -m venv .venv
 
 ## Deployment Notes
 
-- `install.sh` provisions a fresh Pi: apt packages, venv, hostapd/dnsmasq AP mode,
-  enables `pixelpotion.service`. `update.sh` pulls the latest GitHub release, backs up
-  `config.json`, reinstalls deps, restarts the service.
+- `install.sh` provisions a Pi (idempotent, needs a `pi` user): apt packages, venv
+  (`--system-site-packages`, so apt's picamera2/RPi.GPIO are visible), hostapd/dnsmasq
+  AP mode with a random per-device passphrase, the visudo-validated sudoers whitelist,
+  and `pixelpotion.service`. `update.sh` pulls the latest GitHub release (only if
+  strictly newer, `v` prefix ignored), backs up `config.json`, redeploys code, sudoers
+  and unit, reinstalls deps, restarts the service.
+- **Adding a runtime file** (module, template, data file): list it in `deploy-files.txt`,
+  or it will not reach the Pi.
+- Shell scripts and `config/*` must keep LF endings (`.gitattributes` enforces it).
 - Live logs on the device: `sudo journalctl -u pixelpotion -f`.
 - The web portal binds `0.0.0.0:8080`; AP mode answers at `192.168.4.1`.
