@@ -451,8 +451,12 @@ def index():
 
 @app.route("/save_config", methods=["POST"])
 def save_config_route():
-    config["gemini_api_key"] = request.form.get("gemini_api_key", "").strip()
-    config["telegram_bot_token"] = request.form.get("telegram_bot_token", "").strip()
+    # Secrets are never rendered back into the form, so a blank field means
+    # "keep the stored value".
+    for secret in ("gemini_api_key", "telegram_bot_token"):
+        submitted = request.form.get(secret, "").strip()
+        if submitted:
+            config[secret] = submitted
     config["telegram_chat_id"] = request.form.get("telegram_chat_id", "").strip()
     module = request.form.get("camera_module", "").strip()
     if module in CAMERA_PROFILES:
@@ -469,6 +473,10 @@ def save_wifi_route():
     if not ssid:
         flash("SSID cannot be empty.", "error")
         return redirect(url_for("index"))
+    # The stored password is never rendered, so blank means "keep it" — but only
+    # for the same network. A new SSID with a blank password is an open network.
+    if not password and ssid == config.get("wifi_ssid"):
+        password = config.get("wifi_password", "")
     config["wifi_ssid"] = ssid
     config["wifi_password"] = password
     save_config(config)

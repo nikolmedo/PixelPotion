@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import app as pixelpotion
-from conftest import make_jpeg_bytes
+from conftest import BASELINE_CONFIG, make_jpeg_bytes
 
 IWLIST_SCAN_OUTPUT = """\
 wlan0     Scan completed :
@@ -59,6 +59,43 @@ class TestSaveConfigRoute:
         persisted = json.loads(isolated_state.config_path.read_text(encoding="utf-8"))
         assert persisted["camera_module"] == "imx219"
 
+    def test_blank_secret_fields_keep_stored_values(self, client, isolated_state):
+        # Arrange — the form never carries stored secrets, so they arrive blank.
+        form = {
+            "gemini_api_key": "",
+            "telegram_bot_token": "   ",
+            "telegram_chat_id": "581234902",
+            "camera_module": "imx708",
+        }
+
+        # Act
+        client.post("/save_config", data=form)
+
+        # Assert
+        assert pixelpotion.config["gemini_api_key"] == BASELINE_CONFIG["gemini_api_key"]
+        assert pixelpotion.config["telegram_bot_token"] == (
+            BASELINE_CONFIG["telegram_bot_token"]
+        )
+        assert pixelpotion.config["telegram_chat_id"] == "581234902"
+        persisted = json.loads(isolated_state.config_path.read_text(encoding="utf-8"))
+        assert persisted["gemini_api_key"] == BASELINE_CONFIG["gemini_api_key"]
+
+    def test_new_secret_values_replace_stored_ones(self, client):
+        # Act
+        client.post("/save_config", data={
+            "gemini_api_key": "AIzaSyB9pQw2eRt5yUi8oPa1sDf4gHj7kLz0xCv",
+            "telegram_bot_token": "",
+            "telegram_chat_id": "492817365",
+        })
+
+        # Assert
+        assert pixelpotion.config["gemini_api_key"] == (
+            "AIzaSyB9pQw2eRt5yUi8oPa1sDf4gHj7kLz0xCv"
+        )
+        assert pixelpotion.config["telegram_bot_token"] == (
+            BASELINE_CONFIG["telegram_bot_token"]
+        )
+
     def test_rejects_unknown_camera_module(self, client):
         # Arrange
         form = {"camera_module": "imx999"}
@@ -97,6 +134,58 @@ class TestSaveWifiRoute:
         assert pixelpotion.config["wifi_ssid"] == "FibraHogar-2.4G"
         assert pixelpotion.config["wifi_password"] == "mate&tostadas99"
         fake_thread.return_value.start.assert_called_once()
+
+    def test_blank_password_keeps_stored_one_for_the_same_network(
+        self, client, fake_thread, monkeypatch
+    ):
+        # Arrange — capture what the background connect would use.
+        connect = MagicMock(return_value=True)
+        monkeypatch.setattr(pixelpotion, "connect_wifi", connect)
+
+        # Act
+        client.post("/save_wifi", data={"wifi_ssid": "CasaOlmedo_5G", "wifi_password": ""})
+
+        # Assert
+        assert pixelpotion.config["wifi_password"] == "patagonia2024!"
+        _, kwargs = fake_thread.call_args
+        kwargs["target"]()
+        connect.assert_called_once_with("CasaOlmedo_5G", "patagonia2024!")
+
+    def test_blank_password_for_a_new_network_is_stored_as_open(
+        self, client, fake_thread
+    ):
+        # Act
+        client.post(
+            "/save_wifi", data={"wifi_ssid": "CafeDelBarrio-Guest", "wifi_password": ""}
+        )
+
+        # Assert
+        assert pixelpotion.config["wifi_ssid"] == "CafeDelBarrio-Guest"
+        assert pixelpotion.config["wifi_password"] == ""
+
+
+class TestIndexPage:
+    def test_never_renders_stored_secrets(self, client):
+        # Act
+        body = client.get("/").data
+
+        # Assert — secrets stay server-side; non-secret settings still show.
+        assert BASELINE_CONFIG["gemini_api_key"].encode() not in body
+        assert BASELINE_CONFIG["telegram_bot_token"].encode() not in body
+        assert BASELINE_CONFIG["wifi_password"].encode() not in body
+        assert b'value="CasaOlmedo_5G"' in body
+        assert b'value="492817365"' in body
+        assert "Saved — leave blank to keep".encode() in body
+
+    def test_shows_format_hints_when_secrets_are_unset(self, client):
+        # Arrange
+        pixelpotion.config["gemini_api_key"] = ""
+
+        # Act
+        body = client.get("/").data
+
+        # Assert
+        assert b'placeholder="AIzaSy..."' in body
 
 
 class TestCaptureRoute:

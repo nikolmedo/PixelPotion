@@ -70,6 +70,10 @@ Telegram error) must leave it queued for retry. Don't break this.
 - **Pending filenames are untrusted.** Any route or helper that turns a portal-supplied
   filename into a path must go through `_resolve_pending()`, which accepts only a bare
   file name inside `photos/pending/` and returns `None` otherwise (the service runs as root).
+- **Secrets are never rendered.** The WiFi password, Gemini key, and Telegram bot token
+  never go back into HTML. A blank secret field on `/save_config` or `/save_wifi` keeps
+  the stored value (WiFi: only when the SSID is unchanged; a new SSID with a blank
+  password is saved as an open network).
 - **Failures degrade, never crash.** Hardware/network helpers (`capture_photo`,
   `is_wifi_connected`, `send_telegram_photos`, `process_image`) return `None`/`False`
   on failure instead of raising. Callers rely on this.
