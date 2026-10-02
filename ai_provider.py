@@ -146,7 +146,8 @@ def _extract_image(response) -> bytes | None:
     block_reason = _reason_name(
         getattr(getattr(response, "prompt_feedback", None), "block_reason", None)
     )
-    if block_reason and block_reason != "BLOCK_REASON_UNSPECIFIED":
+    # The SDK's zero value (e.g. BLOCKED_REASON_UNSPECIFIED) means "not blocked".
+    if block_reason and not block_reason.endswith("_UNSPECIFIED"):
         raise SafetyBlocked(f"prompt blocked ({block_reason})")
     if not response.candidates:
         raise SafetyBlocked("no candidates returned")

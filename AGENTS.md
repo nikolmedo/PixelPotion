@@ -153,7 +153,7 @@ Don't break this.
 ```bash
 python -m venv .venv
 .venv/Scripts/python -m pip install -r requirements-dev.txt   # Windows
-.venv/Scripts/python -m pytest                                # 228 tests (7 POSIX/bash-only, skipped on Windows), ~3s
+.venv/Scripts/python -m pytest                                # 230 tests (7 POSIX/bash-only, skipped on Windows), ~3s
 ```
 
 - Suite layout mirrors the layers: `test_constants`, `test_ai_provider`, `test_app_config`,
