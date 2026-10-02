@@ -180,7 +180,7 @@ class TestSetupFlow:
         assert "Get started" in body
         for anchor in ("#gemini", "#telegram", "#wifi"):
             assert parsed.find("a", href=anchor), anchor
-            assert parsed.find("fieldset", id=anchor[1:]) or parsed.find("div", id=anchor[1:])
+            assert anchor[1:] in {attrs.get("id") for _, attrs in parsed.tags}, anchor
         assert body.count("To do:") == 3
         assert "/newbot" in body
         assert "mobile data" in body
@@ -405,11 +405,16 @@ def contrast_ratio(foreground: str, background: str) -> float:
 
 # Every text colour paired with each background it is drawn on.
 TEXT_PAIRS = [
-    ("text", "bg"), ("text", "surface"), ("text", "surface2"),
-    ("text-dim", "bg"), ("text-dim", "surface"), ("text-dim", "surface2"),
-    ("accent2", "surface"),
-    ("on-accent", "accent"), ("on-success", "green"),
-    ("on-danger", "red"), ("on-warning", "yellow"),
+    ("paper", "ink"), ("paper", "ink-raised"), ("paper", "ink-well"),
+    ("paper-dim", "ink"), ("paper-dim", "ink-raised"), ("paper-dim", "ink-well"),
+    ("safelight-text", "ink"), ("safelight-text", "ink-raised"),
+    ("on-paper", "paper"), ("on-safelight", "safelight"),
+    ("on-verdigris", "verdigris"), ("on-amber", "amber"),
+]
+# Borders and markers that identify controls or states need 3:1.
+UI_PAIRS = [
+    ("line-strong", "ink-raised"), ("paper-dim", "ink"),
+    ("verdigris", "ink-raised"), ("amber", "ink-raised"), ("focus", "ink"),
 ]
 
 
@@ -424,6 +429,24 @@ class TestColourContrast:
 
         # Assert
         assert ratio >= 4.5, f"--{foreground} on --{background}: {ratio:.2f}"
+
+    @pytest.mark.parametrize("foreground, background", UI_PAIRS)
+    def test_control_borders_and_markers_meet_wcag_aa(self, foreground, background):
+        # Arrange
+        tokens = css_tokens()
+
+        # Act
+        ratio = contrast_ratio(tokens[foreground], tokens[background])
+
+        # Assert
+        assert ratio >= 3.0, f"--{foreground} on --{background}: {ratio:.2f}"
+
+    def test_reduced_motion_is_respected(self):
+        # Act
+        css = (STATIC_DIR / "app.css").read_text(encoding="utf-8")
+
+        # Assert
+        assert "@media (prefers-reduced-motion: reduce)" in css
 
     def test_contrast_maths_matches_the_wcag_reference(self):
         # Act / Assert — black on white is the 21:1 maximum.
@@ -502,3 +525,33 @@ class TestLiveStatus:
         # Assert
         assert grid["data-count"] == "1"
         assert "preview.open" in source and "b.checked" in source
+
+
+class TestVisualIdentity:
+    EMOJI = re.compile("[\U0001F300-\U0001FAFF☀-➿️]")
+
+    @pytest.mark.parametrize("path", sorted(
+        list((REPO_ROOT / "templates").glob("*.html")) + list(STATIC_DIR.glob("*.js")),
+        key=lambda p: p.name,
+    ), ids=lambda p: p.name)
+    def test_ui_chrome_uses_svg_icons_not_emoji(self, path):
+        # Act
+        found = self.EMOJI.findall(path.read_text(encoding="utf-8"))
+
+        # Assert
+        assert found == []
+
+    def test_typography_uses_only_system_font_stacks(self):
+        # Act
+        css = (STATIC_DIR / "app.css").read_text(encoding="utf-8")
+
+        # Assert — no web fonts: the access point has no internet.
+        assert "@font-face" not in css and "@import" not in css
+        assert "ui-serif" in css and "ui-monospace" in css
+
+    def test_capture_button_is_the_round_shutter(self, client):
+        # Act
+        body = client.get("/").get_data(as_text=True)
+
+        # Assert
+        assert re.search(r'class="capture-btn"[^>]*>\s*<span class="shutter-core"><svg', body)
