@@ -582,9 +582,65 @@ class TestVisualIdentity:
         assert "@font-face" not in css and "@import" not in css
         assert "ui-rounded" in css and "system-ui" in css
 
-    def test_capture_button_is_the_round_shutter(self, client):
+    def test_capture_button_is_the_labelled_shutter(self, client):
         # Act
         body = client.get("/").get_data(as_text=True)
+        parsed = a11y(client, "/")
+        (shutter,) = [(a, t) for a, t in parsed.buttons if a.get("id") == "captureBtn"]
+
+        # Assert — the visible label is the accessible name (no aria-label
+        # that could drift from it).
+        assert re.search(r'class="capture-btn"[^>]*>\s*<span class="shutter-core"><svg', body)
+        assert shutter[1] == "Take photo"
+        assert "aria-label" not in shutter[0]
+
+
+class TestPotionBottle:
+    """The bottle on the Camera page pictures the pipeline step."""
+
+    BOTTLE_STEPS = ("capturing", "queued", "brewing", "sending", "done",
+                    "failed", "waiting_wifi")
+
+    def test_bottle_starts_from_the_current_pipeline_step(self, client):
+        # Arrange
+        pixelpotion.fail_status("brewing", "Gemini error 500 — kept in pending for retry")
+
+        # Act
+        (potion,) = audit(client, "/").find("div", id="potion")
 
         # Assert
-        assert re.search(r'class="capture-btn"[^>]*>\s*<span class="shutter-core"><svg', body)
+        assert potion["data-step"] == "failed"
+        assert potion["data-failed-step"] == "brewing"
+
+    def test_bottle_is_decorative_and_its_steps_are_text(self, client):
+        # Act
+        parsed = audit(client, "/")
+        (svg,) = [a for t, a in parsed.tags if t == "svg" and "bottle" in a.get("class", "")]
+
+        # Assert — screen readers get the step list and status line instead.
+        assert svg["aria-hidden"] == "true"
+        assert parsed.find("ol", id="tracker")
+        assert parsed.find("p", id="statusText")
+
+    @pytest.mark.parametrize("step", BOTTLE_STEPS)
+    def test_every_bottle_step_has_a_look(self, step):
+        # Arrange
+        css = (STATIC_DIR / "app.css").read_text(encoding="utf-8")
+
+        # Act / Assert
+        assert f'.potion[data-step="{step}"]' in css
+
+    def test_bottle_steps_are_real_pipeline_steps(self):
+        # Act / Assert
+        assert set(self.BOTTLE_STEPS) <= set(pixelpotion.PIPELINE_STEPS)
+
+    def test_script_keeps_the_bottle_in_step_with_the_status(self):
+        # Arrange
+        source = (STATIC_DIR / "index.js").read_text(encoding="utf-8")
+
+        # Act
+        render = re.search(r"function renderPotion\(.*?\n    \}", source, re.S).group(0)
+
+        # Assert — celebratory motion only answers a change of step.
+        assert "potion.dataset.step = step" in render
+        assert "step === previous" in render

@@ -14,13 +14,13 @@
 
 {% block content %}
         {% if not setup_done %}
-        <!-- First run -->
-        <section class="card setup-card" id="setup" aria-labelledby="setupTitle">
+        <!-- First run: a sticky note that points at each settings section -->
+        <section class="setup-note" id="setup" aria-labelledby="setupTitle">
             <h2 id="setupTitle">Get started</h2>
             <p class="setup-intro">Three things to set up before your first photo can be delivered.</p>
             <ol class="setup-steps">
                 <li class="setup-step {{ 'is-done' if gemini_ready }}">
-                    <span class="setup-mark">{{ icon("check" if gemini_ready else "cross") }}<span class="visually-hidden">{{ "Done:" if gemini_ready else "To do:" }}</span></span>
+                    <span class="setup-mark">{% if gemini_ready %}{{ icon("check", 18) }}{% else %}1{% endif %}<span class="visually-hidden">{{ "Done:" if gemini_ready else "To do:" }}</span></span>
                     <div>
                         <a href="#gemini">Add your Gemini key</a>
                         <p>Create a free key at <strong>aistudio.google.com/apikey</strong>.
@@ -29,7 +29,7 @@
                     </div>
                 </li>
                 <li class="setup-step {{ 'is-done' if telegram_ready }}">
-                    <span class="setup-mark">{{ icon("check" if telegram_ready else "cross") }}<span class="visually-hidden">{{ "Done:" if telegram_ready else "To do:" }}</span></span>
+                    <span class="setup-mark">{% if telegram_ready %}{{ icon("check", 18) }}{% else %}2{% endif %}<span class="visually-hidden">{{ "Done:" if telegram_ready else "To do:" }}</span></span>
                     <div>
                         <a href="#telegram">Connect Telegram</a>
                         <p>In Telegram, open <strong>@BotFather</strong>, send <code>/newbot</code> and copy the
@@ -38,7 +38,7 @@
                     </div>
                 </li>
                 <li class="setup-step {{ 'is-done' if wifi_connected }}">
-                    <span class="setup-mark">{{ icon("check" if wifi_connected else "cross") }}<span class="visually-hidden">{{ "Done:" if wifi_connected else "To do:" }}</span></span>
+                    <span class="setup-mark">{% if wifi_connected %}{{ icon("check", 18) }}{% else %}3{% endif %}<span class="visually-hidden">{{ "Done:" if wifi_connected else "To do:" }}</span></span>
                     <div>
                         <a href="#wifi">Join your WiFi</a>
                         <p>Do this last: the camera leaves setup mode and your phone
@@ -49,24 +49,22 @@
         </section>
         {% endif %}
 
-        <!-- The camera: status, style, shutter and progress in one panel -->
-        <section class="card camera-panel" id="captureCard" aria-labelledby="cameraTitle"
+        <!-- The camera: status, style, the potion bottle and the shutter -->
+        <section class="camera" id="captureCard" aria-labelledby="cameraTitle"
                  data-capturing="{{ 'true' if status.capturing else 'false' }}">
-            <div class="panel-head">
-                <h2 id="cameraTitle">Camera</h2>
-                <div class="status-bar">
-                    <div class="status-chip" id="wifiChip">
-                        <span class="dot {{ 'green' if wifi_connected else 'red' }}"></span>
-                        <span class="chip-text">WiFi: {{ "Connected" if wifi_connected else "AP Mode" }}</span>
-                    </div>
-                    <div class="status-chip">
-                        <span class="dot {{ 'green' if gemini_ready else 'red' }}"></span>
-                        <span class="chip-text">Gemini</span>
-                    </div>
-                    <div class="status-chip">
-                        <span class="dot {{ 'green' if telegram_ready else 'red' }}"></span>
-                        <span class="chip-text">Telegram</span>
-                    </div>
+            <h2 id="cameraTitle" class="visually-hidden">Camera</h2>
+            <div class="status-bar">
+                <div class="status-chip" id="wifiChip">
+                    <span class="dot {{ 'green' if wifi_connected else 'red' }}"></span>
+                    <span class="chip-text">WiFi: {{ "Connected" if wifi_connected else "AP Mode" }}</span>
+                </div>
+                <div class="status-chip">
+                    <span class="dot {{ 'green' if gemini_ready else 'red' }}"></span>
+                    <span class="chip-text">Gemini<span class="visually-hidden">: {{ "ready" if gemini_ready else "not set up" }}</span></span>
+                </div>
+                <div class="status-chip">
+                    <span class="dot {{ 'green' if telegram_ready else 'red' }}"></span>
+                    <span class="chip-text">Telegram<span class="visually-hidden">: {{ "ready" if telegram_ready else "not set up" }}</span></span>
                 </div>
             </div>
 
@@ -83,27 +81,71 @@
             <p class="empty-note">No styles yet. <a href="/styles">Create a style</a> to start taking photos.</p>
             {% endif %}
 
-            <div class="capture-section">
-                <button type="button" class="capture-btn" id="captureBtn" aria-label="Take a photo"
-                        aria-describedby="captureHint"><span class="shutter-core">{{ icon("camera", 34) }}</span></button>
-                <p class="hint" id="captureHint">Tap to take a photo, or press the button on the camera.</p>
+            <!-- The bottle fills as the latest photo moves through the pipeline.
+                 It is decoration: the step list beside it and the status line
+                 carry the same information as text. -->
+            <div class="potion" id="potion" data-step="{{ status.step }}" data-failed-step="{{ status.failed_step }}">
+                <svg class="bottle" viewBox="0 0 200 240" width="200" height="240" aria-hidden="true" focusable="false">
+                    <defs>
+                        <clipPath id="potionGlass"><path d="M80 46V99.2A64 64 0 1 0 120 99.2V46Z"/></clipPath>
+                    </defs>
+                    <g class="bottle-all">
+                        <path class="glass-back" d="M80 46V99.2A64 64 0 1 0 120 99.2V46Z"/>
+                        <g clip-path="url(#potionGlass)">
+                            <g class="liquid">
+                                <path class="wave wave-back" d="M-100 0q12.5-7 25 0t25 0 25 0 25 0 25 0 25 0 25 0 25 0 25 0 25 0 25 0 25 0 25 0 25 0 25 0 25 0 25 0 25 0 25 0 25 0V260H-100Z"/>
+                                <path class="wave wave-front" d="M-100 0q12.5-7 25 0t25 0 25 0 25 0 25 0 25 0 25 0 25 0 25 0 25 0 25 0 25 0 25 0 25 0 25 0 25 0 25 0 25 0 25 0 25 0V260H-100Z"/>
+                            </g>
+                            <g class="bubbles">
+                                <circle class="bubble" cx="78" cy="214" r="6"/>
+                                <circle class="bubble" cx="104" cy="218" r="4"/>
+                                <circle class="bubble" cx="124" cy="212" r="7"/>
+                                <circle class="bubble" cx="92" cy="220" r="3.5"/>
+                            </g>
+                        </g>
+                        <path class="shine" d="M56 150a46 46 0 0 1 14-34"/>
+                        <path class="ticks" d="M146 184h13M142 128h13M108 92h12M108 60h12"/>
+                        <path class="leaders" d="M162 184h38M158 128h42M123 92h77M123 60h77"/>
+                        <path class="glass" d="M80 46V99.2A64 64 0 1 0 120 99.2V46"/>
+                        <rect class="rim" x="72" y="38" width="56" height="12" rx="6"/>
+                        <g class="cork">
+                            <rect x="84" y="10" width="32" height="32" rx="7"/>
+                            <path d="M84 22h32M84 30h32"/>
+                        </g>
+                    </g>
+                    <g class="sparkles">
+                        <path class="spark" d="M58 30q4 0 4-8 0 8 4 8-4 0-4 8 0-8-4-8z"/>
+                        <path class="spark" d="M74 2q3 0 3-6 0 6 3 6-3 0-3 6 0-6-3-6z"/>
+                        <path class="spark" d="M134 20q4 0 4-8 0 8 4 8-4 0-4 8 0-8-4-8z"/>
+                        <path class="spark" d="M150 46q3 0 3-6 0 6 3 6-3 0-3 6 0-6-3-6z"/>
+                        <path class="spark" d="M46 58q3 0 3-6 0 6 3 6-3 0-3 6 0-6-3-6z"/>
+                    </g>
+                </svg>
+                <ol class="tracker" id="tracker" aria-label="Progress of the latest photo"
+                    data-step="{{ status.step }}" data-failed-step="{{ status.failed_step }}">
+                    <li data-step="capturing"><span class="tracker-name">Capture</span><span class="visually-hidden tracker-state"></span></li>
+                    <li data-step="brewing"><span class="tracker-name">Brew</span><span class="visually-hidden tracker-state"></span></li>
+                    <li data-step="sending"><span class="tracker-name">Send</span><span class="visually-hidden tracker-state"></span></li>
+                    <li data-step="done"><span class="tracker-name">Delivered</span><span class="visually-hidden tracker-state"></span></li>
+                </ol>
             </div>
 
-            <ol class="tracker" id="tracker" aria-label="Progress of the latest photo"
-                data-step="{{ status.step }}" data-failed-step="{{ status.failed_step }}">
-                <li data-step="capturing"><span class="tracker-name">Capture</span><span class="visually-hidden tracker-state"></span></li>
-                <li data-step="brewing"><span class="tracker-name">Brew</span><span class="visually-hidden tracker-state"></span></li>
-                <li data-step="sending"><span class="tracker-name">Send</span><span class="visually-hidden tracker-state"></span></li>
-                <li data-step="done"><span class="tracker-name">Delivered</span><span class="visually-hidden tracker-state"></span></li>
-            </ol>
             <p class="status-text {{ 'processing' if status.processing else '' }}" id="statusText" role="status" aria-live="polite">
                 {{ status.last_action }}
             </p>
+
+            <div class="capture-section">
+                <button type="button" class="capture-btn" id="captureBtn"
+                        aria-describedby="captureHint"><span class="shutter-core">{{ icon("camera", 26) }}</span><span class="shutter-label">Take photo</span></button>
+                <p class="hint" id="captureHint">Or press the button on the camera.</p>
+            </div>
         </section>
+
+        <h2 class="section-title" id="settingsTitle">Settings</h2>
 
         <!-- AI + Telegram: one form, because saving it writes every field -->
         <section class="card" id="keys" aria-labelledby="keysTitle">
-            <h2 id="keysTitle">{{ icon("key") }} AI and Telegram</h2>
+            <h3 id="keysTitle">{{ icon("key") }} AI and Telegram</h3>
             <form method="post" action="/save_config">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <fieldset class="form-section" id="gemini">
@@ -159,7 +201,7 @@
 
         <!-- WiFi comes last: saving it ends the setup connection -->
         <section class="card" id="wifi" aria-labelledby="wifiTitle">
-            <h2 id="wifiTitle">{{ icon("wifi") }} WiFi</h2>
+            <h3 id="wifiTitle">{{ icon("wifi") }} WiFi</h3>
             <button type="button" class="btn btn-outline" id="scanWifiBtn">{{ icon("search") }} Find networks</button>
             <div class="wifi-list" id="wifiList" aria-live="polite" hidden></div>
             <form method="post" action="/save_wifi" id="wifiForm" data-ap-name="{{ ap_name }}">
