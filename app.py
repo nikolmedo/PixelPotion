@@ -101,27 +101,32 @@ def load_config() -> dict:
     return cfg
 
 
-def save_config(cfg: dict):
-    """Write config.json atomically: a crash leaves either the old or the new file.
+def write_json_atomic(path: Path, data, mode: int = 0o600):
+    """Write JSON so a crash leaves either the old or the new file, never half.
 
-    The data goes to a temporary file in the same directory, is flushed to
-    disk, and then replaces config.json in one rename.
+    The data goes to a temporary dot-file in the same directory (created with
+    `mode`), is flushed to disk, and then replaces `path` in one rename.
+    Raises OSError on failure, after removing the temporary file.
     """
+    tmp_path = path.with_name(f".{path.name}.tmp")
+    try:
+        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+    os.chmod(path, mode)
+
+
+def save_config(cfg: dict):
+    """Persist config atomically. config.json holds API keys and the WiFi
+    password, so it is owner-only (0600) from the moment it exists."""
     with config_lock:
-        tmp_path = CONFIG_PATH.with_name(f".{CONFIG_PATH.name}.tmp")
-        try:
-            # config.json holds API keys and the WiFi password: owner-only
-            # access from the moment the file exists.
-            fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(cfg, f, indent=2, ensure_ascii=False)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp_path, CONFIG_PATH)
-        except BaseException:
-            tmp_path.unlink(missing_ok=True)
-            raise
-        os.chmod(CONFIG_PATH, 0o600)
+        write_json_atomic(CONFIG_PATH, cfg, 0o600)
 
 
 def get_active_prompt() -> str:
@@ -463,7 +468,15 @@ def process_with_ai(image_path, prompt=None):
 # ---------------------------------------------------------------------------
 # Telegram
 # ---------------------------------------------------------------------------
-def send_telegram_photos(original_path, processed_path, style_name=""):
+ORIGINAL_CAPTION = "📷 Original photo"
+
+
+def styled_caption(style_name=""):
+    return f"🎨 Style: {style_name}" if style_name else "🎨 Styled version"
+
+
+def send_telegram_photo(photo_path, caption) -> bool:
+    """Send one photo to the configured chat; False (logged) on any failure."""
     token = config.get("telegram_bot_token", "")
     chat_id = config.get("telegram_chat_id", "")
     if not token or not chat_id:
@@ -471,28 +484,27 @@ def send_telegram_photos(original_path, processed_path, style_name=""):
         return False
     try:
         import requests
-        api_url = f"https://api.telegram.org/bot{token}"
-        with open(original_path, "rb") as photo:
-            resp1 = requests.post(f"{api_url}/sendPhoto",
-                                  data={"chat_id": chat_id, "caption": "📷 Original photo"},
-                                  files={"photo": photo}, timeout=30)
-        caption = f"🎨 Style: {style_name}" if style_name else "🎨 Styled version"
-        with open(processed_path, "rb") as photo:
-            resp2 = requests.post(f"{api_url}/sendPhoto",
-                                  data={"chat_id": chat_id, "caption": caption},
-                                  files={"photo": photo}, timeout=30)
-        ok = resp1.ok and resp2.ok
-        if ok:
-            log.info("Photos sent via Telegram")
-        else:
-            log.error("Telegram error: %s / %s", resp1.text, resp2.text)
-        return ok
+        with open(photo_path, "rb") as photo:
+            resp = requests.post(f"https://api.telegram.org/bot{token}/sendPhoto",
+                                 data={"chat_id": chat_id, "caption": caption},
+                                 files={"photo": photo}, timeout=30)
+        if not resp.ok:
+            log.error("Telegram error for %s: %s", Path(photo_path).name, resp.text)
+            return False
+        log.info("Sent via Telegram: %s", Path(photo_path).name)
+        return True
     except Exception as e:
         # requests puts the request URL — which embeds the bot token — in its
         # exception text, so never log it verbatim.
         log.error("Error sending via Telegram: %s",
                   redact(str(e), token, quote(token, safe="")))
         return False
+
+
+def send_telegram_photos(original_path, processed_path, style_name=""):
+    """Send the original, then the styled photo; True only if both arrived."""
+    return (send_telegram_photo(original_path, ORIGINAL_CAPTION)
+            and send_telegram_photo(processed_path, styled_caption(style_name)))
 
 
 def redact(message: str, *secrets_to_hide: str) -> str:
@@ -517,7 +529,7 @@ status = {"last_action": "Waiting...", "processing": False, "capturing": False}
 
 # Processing runs on ONE long-lived worker thread fed by this queue, so a
 # capture never waits for (or is dropped by) a photo that is being processed.
-work_queue: "queue.Queue[tuple[str, str | None]]" = queue.Queue()
+work_queue: "queue.Queue[str]" = queue.Queue()
 _queued_names: set[str] = set()   # queued or in progress, for de-duplication
 _queue_lock = threading.Lock()
 _worker_thread: threading.Thread | None = None
@@ -531,6 +543,69 @@ def update_status(**fields):
 def status_snapshot() -> dict:
     with status_lock:
         return dict(status)
+
+
+# Each pending photo has a JSON sidecar (`<photo>.jpg.json`) recording how far
+# its delivery got, so a retry resumes instead of starting over: the AI step is
+# not paid for twice and Telegram never receives the same photo twice.
+PHOTO_STATE_DEFAULTS = {
+    "style_id": None,              # style chosen at capture time
+    "processed_path": None,        # styled image, once the AI step succeeded
+    "telegram_original_sent": False,
+    "telegram_styled_sent": False,
+    "attempts": 0,
+    "failed": False,               # permanent error: auto-retry skips it
+    "failed_reason": "",
+}
+# Serializes sidecar read-modify-writes with photo deletion.
+_photo_state_lock = threading.Lock()
+
+
+def _state_path(pending_path: Path) -> Path:
+    return pending_path.with_name(f"{pending_path.name}.json")
+
+
+def read_photo_state(pending_path: Path) -> dict:
+    """Delivery state of a pending photo; defaults if it has no readable sidecar."""
+    state = dict(PHOTO_STATE_DEFAULTS)
+    try:
+        with open(_state_path(pending_path), encoding="utf-8") as f:
+            saved = json.load(f)
+        if isinstance(saved, dict):
+            state.update(saved)
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError) as e:
+        log.warning("Ignoring unreadable state for %s: %s", pending_path.name, e)
+    return state
+
+
+def update_photo_state(pending_path: Path, **changes) -> dict | None:
+    """Merge `changes` into the photo's sidecar; None if the photo is gone.
+
+    The existence check runs under the same lock as deletion, so a photo
+    deleted mid-processing never gets an orphan sidecar written back.
+    """
+    with _photo_state_lock:
+        if not pending_path.exists():
+            return None
+        state = read_photo_state(pending_path)
+        state.update(changes)
+        write_json_atomic(_state_path(pending_path), state, 0o644)
+        return state
+
+
+def request_processing(pending_path: Path, style_id=None):
+    """Prepare a pending photo for a manual (re)try from the portal.
+
+    A different style invalidates the styled image made with the old one.
+    """
+    state = read_photo_state(pending_path)
+    changes = {}
+    if style_id and style_id != state["style_id"]:
+        changes.update(style_id=style_id, processed_path=None, telegram_styled_sent=False)
+    if changes:
+        update_photo_state(pending_path, **changes)
 
 
 def _resolve_style(style_id):
@@ -566,18 +641,20 @@ def ensure_in_pending(photo_path) -> bool:
 
 
 def remove_from_pending(photo_path):
-    """Photo has been delivered — remove it from the pending queue."""
+    """Photo has been delivered — remove it and its sidecar from the queue."""
     pending_path = PHOTOS_PENDING / Path(photo_path).name
-    pending_path.unlink(missing_ok=True)
+    with _photo_state_lock:
+        pending_path.unlink(missing_ok=True)
+        _state_path(pending_path).unlink(missing_ok=True)
 
 
-def enqueue_pending(filename, style_id=None) -> bool:
+def enqueue_pending(filename) -> bool:
     """Queue a pending photo for the worker; False if it is already queued."""
     with _queue_lock:
         if filename in _queued_names:
             return False
         _queued_names.add(filename)
-    work_queue.put((filename, style_id))
+    work_queue.put(filename)
     return True
 
 
@@ -598,7 +675,12 @@ def capture_to_pending(style_id=None) -> str | None:
             update_status(last_action="Error: could not save photo")
             return None
         name = Path(photo_path).name
-        enqueue_pending(name, style_id)
+        try:
+            update_photo_state(PHOTOS_PENDING / name, style_id=style_id)
+        except OSError as e:
+            # The photo itself is safe; a retry falls back to the active style.
+            log.error("Could not record the style of %s: %s", name, e)
+        enqueue_pending(name)
         update_status(last_action=f"Captured {name} — queued for processing")
         return name
     finally:
@@ -613,6 +695,9 @@ def _resolve_pending(filename) -> Path | None:
     """
     if not filename or filename in (".", "..") or "/" in filename or "\\" in filename:
         return None
+    # Only photos are addressable: never the sidecars or temporary files.
+    if not filename.endswith(".jpg"):
+        return None
     try:
         if Path(filename).name != filename:
             return None
@@ -625,35 +710,52 @@ def _resolve_pending(filename) -> Path | None:
     return candidate
 
 
-def process_pending_photo(filename, style_id=None) -> bool:
+def process_pending_photo(filename) -> bool:
     """Run AI + Telegram for one pending photo. Called by the worker thread.
 
-    Returns False if the photo is not (or no longer) in the pending queue.
-    The photo leaves pending only after Telegram delivery succeeds.
+    Resumes from the photo's sidecar: a styled image that already exists is
+    reused, and only the Telegram messages not yet sent are sent. Returns
+    False if the photo is not (or no longer) in the pending queue. The photo
+    leaves pending only after both Telegram messages were delivered.
     """
     pending_path = _resolve_pending(filename)
     if pending_path is None or not pending_path.exists():
         return False
     name = pending_path.name
-    prompt, style_name = _resolve_style(style_id)
+    state = read_photo_state(pending_path)
+    prompt, style_name = _resolve_style(state["style_id"])
     update_status(processing=True)
     try:
         if not is_wifi_connected():
             update_status(last_action=f"No WiFi — kept in pending: {name}")
             return True
+        state = update_photo_state(pending_path, attempts=state["attempts"] + 1)
+        if state is None:
+            return False  # deleted from the gallery meanwhile
 
-        update_status(last_action=f"Adding potion ({style_name})...")
-        processed = process_with_ai(str(pending_path), prompt)
-        if not processed:
-            update_status(last_action="AI processing failed — kept in pending for retry")
-            return True
+        processed = state["processed_path"]
+        if not state["telegram_styled_sent"] and not (processed and Path(processed).is_file()):
+            update_status(last_action=f"Adding potion ({style_name})...")
+            processed = process_with_ai(str(pending_path), prompt)
+            if not processed:
+                update_status(last_action="AI processing failed — kept in pending for retry")
+                return True
+            update_photo_state(pending_path, processed_path=processed)
 
         update_status(last_action="Sending via Telegram...")
-        if send_telegram_photos(str(pending_path), processed, style_name):
-            remove_from_pending(pending_path)
-            update_status(last_action=f"✅ Done ({style_name}): {name}")
-        else:
-            update_status(last_action="Telegram failed — kept in pending for retry")
+        if not state["telegram_original_sent"]:
+            if not send_telegram_photo(str(pending_path), ORIGINAL_CAPTION):
+                update_status(last_action="Telegram failed — kept in pending for retry")
+                return True
+            update_photo_state(pending_path, telegram_original_sent=True)
+        if not state["telegram_styled_sent"]:
+            if not send_telegram_photo(processed, styled_caption(style_name)):
+                update_status(last_action="Telegram failed — kept in pending for retry")
+                return True
+            update_photo_state(pending_path, telegram_styled_sent=True)
+
+        remove_from_pending(pending_path)
+        update_status(last_action=f"✅ Done ({style_name}): {name}")
         return True
     except Exception as e:
         update_status(last_action=f"Error: {e} — kept in pending")
@@ -670,11 +772,11 @@ def process_next(block=True, timeout=None) -> bool:
     run the pipeline synchronously.
     """
     try:
-        filename, style_id = work_queue.get(block=block, timeout=timeout)
+        filename = work_queue.get(block=block, timeout=timeout)
     except queue.Empty:
         return False
     try:
-        process_pending_photo(filename, style_id=style_id)
+        process_pending_photo(filename)
     except Exception as e:
         log.error("Worker error for %s: %s", filename, e)
     finally:
@@ -710,8 +812,8 @@ def auto_retry_loop():
         try:
             if not is_wifi_connected():
                 continue
-            queued = sum(enqueue_pending(name, config.get("active_style_id"))
-                         for name in pending_photo_names())
+            # Each photo keeps the style it was captured with.
+            queued = sum(enqueue_pending(name) for name in pending_photo_names())
             if queued:
                 log.info("Auto-retry: queued %d pending photo(s)", queued)
         except Exception as e:
@@ -933,7 +1035,8 @@ def process_photo_route():
     if not pending_path.exists():
         flash(f"{filename} was not found.", "error")
         return redirect(url_for("gallery"))
-    if enqueue_pending(filename, style_id):
+    request_processing(pending_path, style_id)
+    if enqueue_pending(filename):
         flash(f"Queued {filename} for processing.", "info")
     else:
         flash(f"{filename} is already queued.", "info")
@@ -946,7 +1049,10 @@ def process_all_route():
     if not is_wifi_connected():
         flash("No WiFi connection.", "error")
         return redirect(url_for("gallery"))
-    queued = sum(enqueue_pending(name, style_id) for name in pending_photo_names())
+    queued = 0
+    for name in pending_photo_names():
+        request_processing(PHOTOS_PENDING / name, style_id)
+        queued += enqueue_pending(name)
     flash(f"Queued {queued} photo(s) for processing.", "info")
     return redirect(url_for("gallery"))
 
@@ -970,13 +1076,19 @@ def delete_photo_route():
 
 
 def _delete_pending_file(path: Path) -> bool:
-    """Delete one pending photo; False (logged) if the filesystem refuses."""
-    try:
-        path.unlink()
+    """Delete one pending photo and its sidecar; False (logged) if the
+    filesystem refuses to delete the photo."""
+    with _photo_state_lock:
+        try:
+            path.unlink()
+        except OSError as e:
+            log.error("Could not delete %s: %s", path.name, e)
+            return False
+        try:
+            _state_path(path).unlink(missing_ok=True)
+        except OSError as e:
+            log.warning("Could not delete the state file of %s: %s", path.name, e)
         return True
-    except OSError as e:
-        log.error("Could not delete %s: %s", path.name, e)
-        return False
 
 
 @app.route("/delete_selected", methods=["POST"])
@@ -1003,6 +1115,8 @@ def delete_selected_route():
 
 @app.route("/pending_photo/<filename>")
 def serve_pending_photo(filename):
+    if _resolve_pending(filename) is None:
+        return "Not found", 404
     return send_from_directory(str(PHOTOS_PENDING), filename)
 
 

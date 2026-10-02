@@ -228,10 +228,10 @@ class TestCaptureRoute:
         assert payload["ok"] is True
         assert payload["filename"] == "photo_20260610_143052.jpg"
         assert pixelpotion.config["active_style_id"] == "anime"
-        assert (isolated_state.pending / "photo_20260610_143052.jpg").exists()
-        assert pixelpotion.work_queue.get_nowait() == (
-            "photo_20260610_143052.jpg", "anime"
-        )
+        pending_photo = isolated_state.pending / "photo_20260610_143052.jpg"
+        assert pending_photo.exists()
+        assert pixelpotion.read_photo_state(pending_photo)["style_id"] == "anime"
+        assert pixelpotion.work_queue.get_nowait() == "photo_20260610_143052.jpg"
 
     def test_captures_while_another_photo_is_processing(
         self, client, camera_shot, isolated_state
@@ -359,6 +359,64 @@ class TestGalleryActions:
 
         # Assert
         assert not target.exists()
+
+    def test_delete_photo_also_removes_its_state_file(self, client, isolated_state):
+        # Arrange
+        target = isolated_state.pending / "photo_20260609_201500.jpg"
+        target.write_bytes(make_jpeg_bytes())
+        pixelpotion.update_photo_state(target, style_id="anime")
+
+        # Act
+        client.post("/delete_photo", data={"filename": target.name})
+
+        # Assert
+        assert list(isolated_state.pending.iterdir()) == []
+
+    def test_delete_selected_also_removes_state_files(self, client, isolated_state):
+        # Arrange
+        names = ["photo_20260608_110001.jpg", "photo_20260608_110002.jpg"]
+        for name in names:
+            photo = isolated_state.pending / name
+            photo.write_bytes(make_jpeg_bytes())
+            pixelpotion.update_photo_state(photo, style_id="pixar")
+
+        # Act
+        client.post("/delete_selected", data={"selected_photos": names})
+
+        # Assert
+        assert list(isolated_state.pending.iterdir()) == []
+
+    def test_state_file_cannot_be_deleted_or_served_by_name(
+        self, client, isolated_state
+    ):
+        # Arrange
+        photo = isolated_state.pending / "photo_20260609_201500.jpg"
+        photo.write_bytes(make_jpeg_bytes())
+        pixelpotion.update_photo_state(photo, style_id="anime")
+        sidecar = "photo_20260609_201500.jpg.json"
+
+        # Act
+        client.post("/delete_photo", data={"filename": sidecar})
+        served = client.get(f"/pending_photo/{sidecar}")
+
+        # Assert
+        assert (isolated_state.pending / sidecar).exists()
+        assert served.status_code == 404
+
+    def test_gallery_lists_photos_but_not_their_state_files(
+        self, client, isolated_state
+    ):
+        # Arrange
+        photo = isolated_state.pending / "photo_20260608_110001.jpg"
+        photo.write_bytes(make_jpeg_bytes())
+        pixelpotion.update_photo_state(photo, style_id="pixar")
+
+        # Act
+        body = client.get("/gallery").get_data(as_text=True)
+
+        # Assert
+        assert "Gallery (1)" in body
+        assert "photo_20260608_110001.jpg.json" not in body
 
     def test_delete_selected_removes_only_chosen_files(self, client, isolated_state):
         # Arrange
@@ -524,9 +582,8 @@ class TestGalleryActions:
     ):
         # Arrange
         monkeypatch.setattr(pixelpotion, "is_wifi_connected", lambda: True)
-        (isolated_state.pending / "photo_20260609_201500.jpg").write_bytes(
-            make_jpeg_bytes()
-        )
+        photo = isolated_state.pending / "photo_20260609_201500.jpg"
+        photo.write_bytes(make_jpeg_bytes())
 
         # Act
         client.post("/process_photo", data={
@@ -534,9 +591,8 @@ class TestGalleryActions:
         })
 
         # Assert
-        assert pixelpotion.work_queue.get_nowait() == (
-            "photo_20260609_201500.jpg", "watercolor"
-        )
+        assert pixelpotion.work_queue.get_nowait() == "photo_20260609_201500.jpg"
+        assert pixelpotion.read_photo_state(photo)["style_id"] == "watercolor"
         assert (
             "info", "Queued photo_20260609_201500.jpg for processing."
         ) in get_flashes(client)
