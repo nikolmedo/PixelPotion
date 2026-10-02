@@ -37,5 +37,5 @@ PHOTOS_PROCESSED = BASE_DIR / "photos" / "processed"
 # ---------------------------------------------------------------------------
 _DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent / "default_config.json"
 
-with open(_DEFAULT_CONFIG_PATH) as _f:
+with open(_DEFAULT_CONFIG_PATH, encoding="utf-8") as _f:
     DEFAULT_CONFIG: dict = json.load(_f)
