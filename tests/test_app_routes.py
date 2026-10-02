@@ -1050,11 +1050,12 @@ class TestTemplateInjectionSafety:
         body = client.get("/gallery").get_data(as_text=True)
 
         # Assert
-        assert re.search(
-            r'<input type="checkbox" name="selected_photos" '
-            r'value="photo_20260608_110001.jpg" form="bulkForm">',
-            body,
-        )
+        boxes = re.findall(r'<input type="checkbox"[^>]*>', body)
+        assert len(boxes) == 1
+        assert 'name="selected_photos"' in boxes[0]
+        assert 'value="photo_20260608_110001.jpg"' in boxes[0]
+        assert 'form="bulkForm"' in boxes[0]
+        assert 'aria-label="Select photo_20260608_110001.jpg"' in boxes[0]
         assert "onclick=\"processOne(" not in body
         assert "openModal('" not in body
 

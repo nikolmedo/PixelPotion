@@ -1,7 +1,54 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% block title %}Settings{% endblock %}
 
+{% set gemini_ready = config.gemini_api_key|length > 0 %}
+{% set telegram_ready = config.telegram_bot_token|length > 0 and config.telegram_chat_id|length > 0 %}
+{% set setup_done = gemini_ready and telegram_ready and wifi_connected %}
+{% set ap_name = config.ap_ssid or "PixelPotion-Setup" %}
+
+{% macro secret_toggle(target, label) -%}
+<button type="button" class="toggle-secret" data-target="{{ target }}" aria-pressed="false"
+        aria-label="Show {{ label }}" data-label="{{ label }}"><span class="when-concealed">{{ icon("eye") }}</span><span class="when-revealed">{{ icon("eye-off") }}</span></button>
+{%- endmacro %}
+
 {% block content %}
+        {% if not setup_done %}
+        <!-- First run -->
+        <section class="card setup-card" id="setup" aria-labelledby="setupTitle">
+            <h2 id="setupTitle">Get started</h2>
+            <p class="setup-intro">Three things to set up before your first photo can be delivered.</p>
+            <ol class="setup-steps">
+                <li class="setup-step {{ 'is-done' if gemini_ready }}">
+                    <span class="setup-mark">{{ icon("check" if gemini_ready else "cross") }}<span class="visually-hidden">{{ "Done:" if gemini_ready else "To do:" }}</span></span>
+                    <div>
+                        <a href="#gemini">Add your Gemini key</a>
+                        <p>Create a free key at <strong>aistudio.google.com/apikey</strong>.
+                           While your phone is on {{ ap_name }} it has no internet here, so switch
+                           to mobile data for a minute, copy the key, then come back.</p>
+                    </div>
+                </li>
+                <li class="setup-step {{ 'is-done' if telegram_ready }}">
+                    <span class="setup-mark">{{ icon("check" if telegram_ready else "cross") }}<span class="visually-hidden">{{ "Done:" if telegram_ready else "To do:" }}</span></span>
+                    <div>
+                        <a href="#telegram">Connect Telegram</a>
+                        <p>In Telegram, open <strong>@BotFather</strong>, send <code>/newbot</code> and copy the
+                           token it gives you. Send any message to your new bot, then ask
+                           <strong>@userinfobot</strong> for your chat ID (a number).</p>
+                    </div>
+                </li>
+                <li class="setup-step {{ 'is-done' if wifi_connected }}">
+                    <span class="setup-mark">{{ icon("check" if wifi_connected else "cross") }}<span class="visually-hidden">{{ "Done:" if wifi_connected else "To do:" }}</span></span>
+                    <div>
+                        <a href="#wifi">Join your WiFi</a>
+                        <p>Do this last: the camera leaves setup mode and your phone
+                           disconnects from {{ ap_name }}.</p>
+                    </div>
+                </li>
+            </ol>
+        </section>
+        {% endif %}
+
         <!-- Status -->
         <div class="card">
             <h2><span class="icon">📊</span> Status</h2>
@@ -11,15 +58,15 @@
                     WiFi: {{ "Connected" if wifi_connected else "AP Mode" }}
                 </div>
                 <div class="status-chip">
-                    <span class="dot {{ 'green' if config.gemini_api_key else 'red' }}"></span>
+                    <span class="dot {{ 'green' if gemini_ready else 'red' }}"></span>
                     Gemini
                 </div>
                 <div class="status-chip">
-                    <span class="dot {{ 'green' if config.telegram_bot_token and config.telegram_chat_id else 'red' }}"></span>
+                    <span class="dot {{ 'green' if telegram_ready else 'red' }}"></span>
                     Telegram
                 </div>
             </div>
-            <p class="status-text {{ 'processing' if status.processing else '' }}" id="statusText">
+            <p class="status-text {{ 'processing' if status.processing else '' }}" id="statusText" role="status" aria-live="polite">
                 {{ status.last_action }}
             </p>
         </div>
@@ -29,15 +76,12 @@
             <h2><span class="icon">📷</span> Capture Photo</h2>
 
             {% if styles|length > 0 %}
-            <div class="form-group" style="margin-bottom:8px;">
-                <label>Select style</label>
-            </div>
-            <div class="style-selector" id="stylePills" data-active-style="{{ active_style_id }}">
+            <p class="field-label" id="styleLabel">Style</p>
+            <div class="style-selector" id="stylePills" role="group" aria-labelledby="styleLabel"
+                 data-active-style="{{ active_style_id }}">
                 {% for style in styles %}
-                <div class="style-pill {{ 'active' if style.id == active_style_id else '' }}"
-                     data-id="{{ style.id }}">
-                    {{ style.name }}
-                </div>
+                <button type="button" class="style-pill" data-id="{{ style.id }}"
+                        aria-pressed="{{ 'true' if style.id == active_style_id else 'false' }}">{{ style.name }}</button>
                 {% endfor %}
             </div>
             {% else %}
@@ -47,67 +91,98 @@
             {% endif %}
 
             <div class="capture-section">
-                <button type="button" class="capture-btn" id="captureBtn">📸</button>
+                <button type="button" class="capture-btn" id="captureBtn" aria-label="Take a photo"
+                        aria-describedby="captureHint">{{ icon("camera", 36) }}</button>
                 <p class="status-text" id="captureHint">Press to capture or use the physical button</p>
             </div>
         </div>
 
-        <!-- WiFi -->
-        <div class="card">
-            <h2><span class="icon">📶</span> WiFi Settings</h2>
-            <button type="button" class="btn btn-primary" style="margin-bottom:12px;" id="scanWifiBtn">🔍 Scan networks</button>
-            <div class="wifi-list" id="wifiList" style="display:none;"></div>
-            <form method="post" action="/save_wifi">
+        <!-- AI + Telegram: one form, because saving it writes every field -->
+        <div class="card" id="keys">
+            <h2><span class="icon">🔑</span> AI and Telegram</h2>
+            <form method="post" action="/save_config">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <div class="form-group">
-                    <label>SSID</label>
-                    <input type="text" name="wifi_ssid" id="wifiSsid" value="{{ config.wifi_ssid }}" placeholder="MyWiFiNetwork">
-                </div>
-                <div class="form-group">
-                    <label>WiFi Password</label>
-                    <div class="toggle-password">
-                        <input type="password" name="wifi_password" id="wifiPass" autocomplete="new-password"
-                               placeholder="{{ 'Saved — leave blank to keep' if config.wifi_password else '••••••••' }}">
-                        <button type="button" class="toggle-secret" data-target="wifiPass">👁️</button>
+                <fieldset class="form-section" id="gemini">
+                    <legend>Gemini (the AI that restyles your photos)</legend>
+                    <div class="form-group">
+                        <label for="geminiKey">Gemini API key</label>
+                        <div class="secret-field">
+                            <input type="password" name="gemini_api_key" id="geminiKey"
+                                   autocomplete="off" autocapitalize="none" spellcheck="false"
+                                   placeholder="{{ 'Saved — leave blank to keep' if config.gemini_api_key else 'AIzaSy...' }}">
+                            {{ secret_toggle("geminiKey", "Gemini API key") }}
+                        </div>
+                        <p class="hint">Get one at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>
+                            (needs internet: use mobile data while on {{ ap_name }}).</p>
                     </div>
-                    <p class="hint">Leave blank to keep the saved password for the same network. A new network with a blank password is saved as an open network.</p>
-                </div>
-                <button type="submit" class="btn btn-success btn-block">📶 Connect to WiFi</button>
+                </fieldset>
+                <fieldset class="form-section" id="telegram">
+                    <legend>Telegram (where your photos arrive)</legend>
+                    <div class="form-group">
+                        <label for="teleToken">Bot token</label>
+                        <div class="secret-field">
+                            <input type="password" name="telegram_bot_token" id="teleToken"
+                                   autocomplete="off" autocapitalize="none" spellcheck="false"
+                                   placeholder="{{ 'Saved — leave blank to keep' if config.telegram_bot_token else '123456789:ABCdef...' }}">
+                            {{ secret_toggle("teleToken", "bot token") }}
+                        </div>
+                        <p class="hint">Send <code>/newbot</code> to <a href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a> and paste the token here.</p>
+                    </div>
+                    <div class="form-group">
+                        <label for="teleChat">Chat ID</label>
+                        <input type="text" name="telegram_chat_id" id="teleChat" value="{{ config.telegram_chat_id }}"
+                               inputmode="numeric" autocomplete="off" autocapitalize="none" spellcheck="false"
+                               placeholder="-1001234567890">
+                        <p class="hint">Send any message to your bot first, then get your ID from
+                            <a href="https://t.me/userinfobot" target="_blank" rel="noopener">@userinfobot</a>.</p>
+                    </div>
+                </fieldset>
+                <fieldset class="form-section" id="camera">
+                    <legend>Camera</legend>
+                    <div class="form-group">
+                        <label for="cameraModule">Camera module</label>
+                        <select name="camera_module" id="cameraModule">
+                            {% for m in camera_modules %}
+                            <option value="{{ m.id }}" {% if config.camera_module == m.id %}selected{% endif %}>{{ m.label }}</option>
+                            {% endfor %}
+                        </select>
+                        <p class="hint">The camera attached to the Pi.</p>
+                    </div>
+                </fieldset>
+                <button type="submit" class="btn btn-primary btn-block">Save settings</button>
             </form>
         </div>
 
-        <!-- API Keys -->
-        <div class="card">
-            <h2><span class="icon">🔑</span> API Keys</h2>
-            <form method="post" action="/save_config">
+        <!-- WiFi comes last: saving it ends the setup connection -->
+        <div class="card" id="wifi">
+            <h2><span class="icon">📶</span> WiFi</h2>
+            <button type="button" class="btn btn-primary" style="margin-bottom:12px;" id="scanWifiBtn">Find networks</button>
+            <div class="wifi-list" id="wifiList" aria-live="polite" hidden></div>
+            <form method="post" action="/save_wifi" id="wifiForm" data-ap-name="{{ ap_name }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="form-group">
-                    <label>Google Gemini API Key</label>
-                    <input type="password" name="gemini_api_key" id="geminiKey" autocomplete="off"
-                           placeholder="{{ 'Saved — leave blank to keep' if config.gemini_api_key else 'AIzaSy...' }}">
-                    <p class="hint">Get yours at <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a></p>
+                    <label for="wifiSsid">Network name</label>
+                    <input type="text" name="wifi_ssid" id="wifiSsid" value="{{ config.wifi_ssid }}"
+                           autocomplete="off" autocapitalize="none" spellcheck="false"
+                           placeholder="MyWiFiNetwork">
                 </div>
                 <div class="form-group">
-                    <label>Telegram Bot Token</label>
-                    <input type="password" name="telegram_bot_token" id="teleToken" autocomplete="off"
-                           placeholder="{{ 'Saved — leave blank to keep' if config.telegram_bot_token else '123456789:ABCdef...' }}">
-                    <p class="hint">Create one with <a href="https://t.me/BotFather" target="_blank">@BotFather</a></p>
+                    <label for="wifiPass">Password</label>
+                    <div class="secret-field">
+                        <input type="password" name="wifi_password" id="wifiPass" autocomplete="new-password"
+                               autocapitalize="none" spellcheck="false"
+                               placeholder="{{ 'Saved — leave blank to keep' if config.wifi_password else '••••••••' }}">
+                        {{ secret_toggle("wifiPass", "WiFi password") }}
+                    </div>
+                    <p class="hint">Leave blank to keep the saved password for the same network. A new network with a blank password is saved as an open network.</p>
                 </div>
-                <div class="form-group">
-                    <label>Telegram Chat ID</label>
-                    <input type="text" name="telegram_chat_id" value="{{ config.telegram_chat_id }}" placeholder="-1001234567890">
-                    <p class="hint">Get yours from <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a></p>
+                <div class="notice notice-warning" id="wifiNotice" role="alert" hidden>
+                    <p><strong>Your phone will disconnect from <span class="ap-name">{{ ap_name }}</span>.</strong></p>
+                    <p>Reconnect your phone to <strong id="wifiNoticeSsid"></strong>, then open
+                       <strong>http://pixelpotion.local:8080</strong> (or the camera's address from your router).
+                       If the camera can't join, {{ ap_name }} comes back after a minute.</p>
                 </div>
-                <div class="form-group">
-                    <label>Camera Module</label>
-                    <select name="camera_module">
-                        {% for m in camera_modules %}
-                        <option value="{{ m.id }}" {% if config.camera_module == m.id %}selected{% endif %}>{{ m.label }}</option>
-                        {% endfor %}
-                    </select>
-                    <p class="hint">Select the physical camera attached to the Pi.</p>
-                </div>
-                <button type="submit" class="btn btn-primary btn-block">💾 Save Configuration</button>
+                <button type="submit" class="btn btn-success btn-block" id="wifiSubmit">Connect to WiFi</button>
             </form>
         </div>
 
