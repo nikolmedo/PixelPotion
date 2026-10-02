@@ -157,6 +157,7 @@
             <button class="btn btn-primary" style="margin-bottom:12px;" onclick="scanWifi()">🔍 Scan networks</button>
             <div class="wifi-list" id="wifiList" style="display:none;"></div>
             <form method="post" action="/save_wifi">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="form-group">
                     <label>SSID</label>
                     <input type="text" name="wifi_ssid" id="wifiSsid" value="{{ config.wifi_ssid }}" placeholder="MyWiFiNetwork">
@@ -178,6 +179,7 @@
         <div class="card">
             <h2><span class="icon">🔑</span> API Keys</h2>
             <form method="post" action="/save_config">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="form-group">
                     <label>Google Gemini API Key</label>
                     <input type="password" name="gemini_api_key" id="geminiKey" autocomplete="off"
@@ -218,6 +220,7 @@
     <div class="toast" id="toast"></div>
 
     <script>
+        const CSRF_TOKEN = {{ csrf_token()|tojson }};
         let selectedStyle = '{{ active_style_id }}';
         let isProcessing = {{ 'true' if status.processing else 'false' }};
 
@@ -229,7 +232,7 @@
             // Persist for GPIO button
             fetch('/set_active_style', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: {'Content-Type': 'application/json', 'X-CSRF-Token': CSRF_TOKEN},
                 body: JSON.stringify({style_id: id})
             });
         }
@@ -244,7 +247,11 @@
             const formData = new FormData();
             formData.append('style_id', selectedStyle);
 
-            fetch('/capture', { method: 'POST', body: formData })
+            fetch('/capture', {
+                method: 'POST',
+                headers: {'X-CSRF-Token': CSRF_TOKEN},
+                body: formData
+            })
                 .then(r => r.json())
                 .then(data => {
                     if (!data.ok) {

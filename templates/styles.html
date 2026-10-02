@@ -91,6 +91,7 @@
         <div class="card">
             <h2><span class="icon">➕</span> Create New Style</h2>
             <form method="post" action="/add_style">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="form-group">
                     <label>Style name</label>
                     <input type="text" name="style_name" placeholder="e.g. Comic Book, Oil Painting, Cyberpunk..." required>
@@ -144,6 +145,7 @@
                             {% endif %}
                             <form method="post" action="/delete_style/{{ style.id }}" style="display:inline;"
                                   onsubmit="return confirm('Delete style \'{{ style.name }}\'?')">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                 <button type="submit" class="btn btn-danger btn-sm">🗑️ Delete</button>
                             </form>
                         </div>
@@ -152,6 +154,7 @@
                     <!-- Edit mode -->
                     <div id="edit-{{ style.id }}" style="display:none;">
                         <form method="post" action="/edit_style/{{ style.id }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <div class="form-group">
                                 <label>Name</label>
                                 <input type="text" name="style_name" value="{{ style.name }}" required>
@@ -215,10 +218,12 @@
             document.getElementById('edit-' + id).style.display = 'none';
         }
 
+        const CSRF_TOKEN = {{ csrf_token()|tojson }};
+
         function setActive(id) {
             fetch('/set_active_style', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: {'Content-Type': 'application/json', 'X-CSRF-Token': CSRF_TOKEN},
                 body: JSON.stringify({style_id: id})
             }).then(() => {
                 window.location.reload();

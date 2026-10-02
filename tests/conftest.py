@@ -24,6 +24,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from flask.testing import FlaskClient
 from PIL import Image
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -143,9 +144,41 @@ def isolated_state(tmp_path, monkeypatch):
     )
 
 
+CSRF_TEST_TOKEN = "Zq3vH8kP1tN6xW0rB4mC7yL2sD9fJ5aE-uGiKoTn_Rc"
+
+
+class CsrfFlaskClient(FlaskClient):
+    """Test client that sends the session's CSRF token header on every request.
+
+    Lets route tests focus on route behavior; CSRF enforcement itself is
+    covered by dedicated tests that use a plain client.
+    """
+
+    def open(self, *args, **kwargs):
+        headers = dict(kwargs.pop("headers", None) or {})
+        headers.setdefault("X-CSRF-Token", CSRF_TEST_TOKEN)
+        kwargs["headers"] = headers
+        return super().open(*args, **kwargs)
+
+
+def seed_csrf_session(test_client, token=CSRF_TEST_TOKEN):
+    """Store a known CSRF token in the client's session cookie."""
+    with test_client.session_transaction() as session:
+        session["_csrf_token"] = token
+    return test_client
+
+
 @pytest.fixture
-def client():
-    """Flask test client for route-level tests."""
+def client(monkeypatch):
+    """Flask test client for route-level tests, pre-authorized for CSRF."""
+    pixelpotion.app.config["TESTING"] = True
+    monkeypatch.setattr(pixelpotion.app, "test_client_class", CsrfFlaskClient)
+    return seed_csrf_session(pixelpotion.app.test_client())
+
+
+@pytest.fixture
+def plain_client():
+    """Flask test client that sends no CSRF token unless a test adds one."""
     pixelpotion.app.config["TESTING"] = True
     return pixelpotion.app.test_client()
 

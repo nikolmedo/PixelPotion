@@ -111,6 +111,7 @@
         {% endif %}
 
         <form method="post" action="/delete_selected" id="bulkForm">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="toolbar">
                 <button type="button" class="btn btn-outline" onclick="toggleSelectAll()">☑️ All</button>
                 <button type="submit" class="btn btn-danger" onclick="return confirm('Delete selected photos?')">🗑️ Delete</button>
@@ -141,6 +142,7 @@
                                     onclick="processOne('{{ photo.name }}')">🎨</button>
                             {% endif %}
                             <form method="post" action="/delete_photo" style="display:inline;">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                 <input type="hidden" name="filename" value="{{ photo.name }}">
                                 <button type="submit" class="btn btn-danger" style="padding:6px 10px;font-size:.8em;"
                                         onclick="return confirm('Delete this photo?')">🗑️</button>
@@ -160,15 +162,25 @@
     </div>
 
     <script>
+        const CSRF_TOKEN = {{ csrf_token()|tojson }};
+
         function getSelectedStyle() {
             const sel = document.getElementById('galleryStyle');
             return sel ? sel.value : '';
         }
 
-        function processOne(filename) {
+        function postForm(action) {
             const form = document.createElement('form');
             form.method = 'post';
-            form.action = '/process_photo';
+            form.action = action;
+            const tInput = document.createElement('input');
+            tInput.type = 'hidden'; tInput.name = 'csrf_token'; tInput.value = CSRF_TOKEN;
+            form.appendChild(tInput);
+            return form;
+        }
+
+        function processOne(filename) {
+            const form = postForm('/process_photo');
 
             const fInput = document.createElement('input');
             fInput.type = 'hidden'; fInput.name = 'filename'; fInput.value = filename;
@@ -184,9 +196,7 @@
 
         function processAll() {
             if (!confirm('Process all photos with the selected style?')) return;
-            const form = document.createElement('form');
-            form.method = 'post';
-            form.action = '/process_all';
+            const form = postForm('/process_all');
 
             const sInput = document.createElement('input');
             sInput.type = 'hidden'; sInput.name = 'style_id'; sInput.value = getSelectedStyle();

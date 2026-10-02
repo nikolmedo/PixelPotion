@@ -70,6 +70,13 @@ Telegram error) must leave it queued for retry. Don't break this.
 - **Pending filenames are untrusted.** Any route or helper that turns a portal-supplied
   filename into a path must go through `_resolve_pending()`, which accepts only a bare
   file name inside `photos/pending/` and returns `None` otherwise (the service runs as root).
+- **Every POST needs a CSRF token.** A `before_request` hook rejects POSTs whose
+  `csrf_token` form field or `X-CSRF-Token` header doesn't match the session token.
+  New `<form method="post">` blocks must include
+  `<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">`; new `fetch()` POSTs
+  must send the `X-CSRF-Token` header (templates expose `CSRF_TOKEN` via `|tojson`).
+  Endpoints called with fetch that expect JSON belong in `JSON_ENDPOINTS`. In tests, the
+  `client` fixture sends a valid token automatically; use `plain_client` to test rejection.
 - **Secrets are never rendered.** The WiFi password, Gemini key, and Telegram bot token
   never go back into HTML. A blank secret field on `/save_config` or `/save_wifi` keeps
   the stored value (WiFi: only when the SSID is unchanged; a new SSID with a blank
