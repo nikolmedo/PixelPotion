@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="dark">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <title>PixelPotion - {% block title %}{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body data-page="{{ request.endpoint }}">
+    <header class="header">
+        <h1>🧪 PixelPotion</h1>
+        <p>{% block subtitle %}AI Style Camera{% endblock %}</p>
+    </header>
+
+    {% set nav_items = [
+        ("index", "/", "📷 Capture"),
+        ("styles_page", "/styles", "🎨 Styles"),
+        ("gallery", "/gallery", "🖼️ Gallery"),
+    ] %}
+    <nav class="nav" aria-label="Main">
+        {% for endpoint, href, label in nav_items %}
+        <a href="{{ href }}"{% if request.endpoint == endpoint %} class="active" aria-current="page"{% endif %}>
+            {{ label }}
+            {% if endpoint == "gallery" %}<span class="pending-badge" id="pendingBadge"{% if not pending_count %} hidden{% endif %}>{{ pending_count }}</span>{% endif %}
+        </a>
+        {% endfor %}
+    </nav>
+
+    <main class="container">
+        <div class="flash-region" id="flashRegion">
+            {% with messages = get_flashed_messages(with_categories=true) %}
+            {% for category, message in messages %}
+            <div class="flash {{ category }}">{{ message }}</div>
+            {% endfor %}
+            {% endwith %}
+        </div>
+
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="footer">
+        <p>PixelPotion{% if app_version %} {{ app_version }}{% endif %}</p>
+    </footer>
+
+    <div class="toast" id="toast"></div>
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

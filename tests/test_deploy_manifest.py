@@ -95,6 +95,17 @@ class TestDeployManifest:
         assert templates
         assert templates <= set(manifest_entries())
 
+    def test_every_static_file_is_deployed(self):
+        # Arrange — the portal is served offline from these files.
+        static_files = {
+            p.relative_to(REPO_ROOT).as_posix()
+            for p in (REPO_ROOT / "static").rglob("*") if p.is_file()
+        }
+
+        # Act / Assert
+        assert static_files
+        assert static_files <= set(manifest_entries())
+
     def test_runtime_data_and_updater_are_deployed(self):
         # Act / Assert
         assert {
