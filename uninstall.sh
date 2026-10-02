@@ -137,8 +137,13 @@ remove_exact_block() {
     local file="$1" tmp
     has_exact_block "$@" || return 1
     tmp="$(mktemp)"
-    filter_exact_block "$@" > "${tmp}" || true
-    cp -p "${file}" "${file}.pixelpotion-uninstall-${TIMESTAMP}"
+    # Callers use this in an `if`, where `set -e` is off: check every step so a
+    # failed filter or backup never overwrites the original file.
+    if ! filter_exact_block "$@" > "${tmp}" ||        ! cp -p "${file}" "${file}.pixelpotion-uninstall-${TIMESTAMP}"; then
+        rm -f "${tmp}"
+        warn "could not safely edit ${file}; left it unchanged"
+        return 1
+    fi
     cat "${tmp}" > "${file}"
     rm -f "${tmp}"
 }
