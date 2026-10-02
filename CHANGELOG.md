@@ -6,6 +6,8 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-10-02
+
 ### Added
 
 - `uninstall.sh` removes a v3.x install: the service, hotspot settings and sudo rules.
@@ -119,7 +121,8 @@ Installs from v2.0.2 or earlier must run `install.sh` once from a fresh clone; a
 
 First release.
 
-[Unreleased]: https://github.com/nikolmedo/PixelPotion/compare/3.1.0...HEAD
+[Unreleased]: https://github.com/nikolmedo/PixelPotion/compare/3.2.0...HEAD
+[3.2.0]: https://github.com/nikolmedo/PixelPotion/compare/3.1.0...3.2.0
 [3.1.0]: https://github.com/nikolmedo/PixelPotion/compare/3.0.0...3.1.0
 [3.0.0]: https://github.com/nikolmedo/PixelPotion/compare/2.0.2...3.0.0
 [2.0.2]: https://github.com/nikolmedo/PixelPotion/compare/2.0.1...2.0.2
