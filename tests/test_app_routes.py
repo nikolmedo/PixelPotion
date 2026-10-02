@@ -9,7 +9,7 @@ import pytest
 
 import app as pixelpotion
 from conftest import (
-    BASELINE_CONFIG, CSRF_TEST_TOKEN, make_jpeg_bytes, seed_csrf_session,
+    BASELINE_CONFIG, CSRF_TEST_TOKEN, REPO_ROOT, make_jpeg_bytes, seed_csrf_session,
 )
 
 IWLIST_SCAN_OUTPUT = """\
@@ -415,7 +415,7 @@ class TestGalleryActions:
         body = client.get("/gallery").get_data(as_text=True)
 
         # Assert
-        assert "Gallery (1)" in body
+        assert re.search(r'id="pendingBadge"[^>]*>1</span>', body)
         assert "photo_20260608_110001.jpg.json" not in body
 
     def test_delete_selected_removes_only_chosen_files(self, client, isolated_state):
@@ -927,7 +927,7 @@ class TestCsrfProtection:
         with plain_client.session_transaction() as session:
             token = session["_csrf_token"]
         assert f'name="csrf_token" value="{token}"' in body
-        assert f"const CSRF_TOKEN = {json.dumps(token)};" in body
+        assert f'<meta name="csrf-token" content="{token}">' in body
 
     @pytest.mark.parametrize("page", ["/", "/styles", "/gallery"])
     def test_every_form_carries_a_csrf_token(
@@ -984,20 +984,45 @@ class TestTemplateInjectionSafety:
         assert b"Van Gogh's" not in body
         assert b"onsubmit=" not in body
 
-    def test_active_style_id_is_embedded_as_a_json_string(self, client):
+    def test_active_style_id_is_embedded_only_as_an_escaped_attribute(self, client):
+        # Arrange — a hostile id must not break out of the attribute.
+        hostile_id = 'x"><script>alert(1)</script>'
+        pixelpotion.config["styles"].append(
+            {"id": hostile_id, "name": "Hostile", "prompt": "TASK: anything."}
+        )
+        pixelpotion.config["active_style_id"] = hostile_id
+
         # Act
         body = client.get("/").get_data(as_text=True)
 
         # Assert
-        assert 'let selectedStyle = "pixar";' in body
+        assert 'data-active-style="x&#34;&gt;&lt;script&gt;alert(1)&lt;/script&gt;"' in body
+        assert "<script>alert(1)</script>" not in body
 
-    def test_wifi_scan_results_are_not_built_with_inner_html(self, client):
+    @pytest.mark.parametrize("page", ["/", "/styles", "/gallery"])
+    def test_pages_never_build_markup_with_inner_html(self, client, page):
         # Act
-        body = client.get("/").get_data(as_text=True)
+        body = client.get(page).get_data(as_text=True)
+
+        # Assert
+        assert "innerHTML" not in body
+
+    def test_static_scripts_never_build_markup_with_inner_html(self, client):
+        # Arrange
+        scripts = sorted((REPO_ROOT / "static").glob("*.js"))
+
+        # Act / Assert
+        assert scripts
+        for script in scripts:
+            source = client.get(f"/static/{script.name}").get_data(as_text=True)
+            assert "innerHTML" not in source, script.name
+
+    def test_wifi_scan_results_are_inserted_as_text(self, client):
+        # Act
+        source = client.get("/static/index.js").get_data(as_text=True)
 
         # Assert — SSIDs are attacker-controlled; they must go through textContent.
-        assert "innerHTML" not in body
-        assert "item.textContent = ssid;" in body
+        assert "item.textContent = ssid;" in source
 
     def test_gallery_has_no_nested_forms(self, client, isolated_state, monkeypatch):
         # Arrange
@@ -1035,17 +1060,21 @@ class TestTemplateInjectionSafety:
 
 
 class TestStyleSelectionFeedback:
-    @pytest.mark.parametrize("page", ["/", "/styles"])
-    def test_failed_style_save_is_reported_to_the_user(self, client, page):
+    def test_shared_post_helper_sends_the_csrf_header_and_checks_status(self, client):
         # Act
-        body = client.get(page).get_data(as_text=True)
+        source = client.get("/static/app.js").get_data(as_text=True)
 
-        # Assert — the fetch checks the HTTP status and handles errors
-        # (browser behavior itself is not exercised by this suite).
-        call = re.search(
-            r"fetch\('/set_active_style'.*?\n        \}", body, re.S
-        ).group(0)
-        assert "'X-CSRF-Token': CSRF_TOKEN" in call
-        assert "if (!r.ok)" in call
+        # Assert — browser behavior itself is not exercised by this suite.
+        helper = re.search(r"function post\(.*?\n    \}", source, re.S).group(0)
+        assert "'X-CSRF-Token': csrfToken()" in helper
+        assert "if (!r.ok)" in helper
+
+    @pytest.mark.parametrize("script", ["index.js", "styles.js"])
+    def test_failed_style_save_is_reported_to_the_user(self, client, script):
+        # Act
+        source = client.get(f"/static/{script}").get_data(as_text=True)
+
+        # Assert
+        call = re.search(r"PP\.post\('/set_active_style'.*?;", source, re.S).group(0)
         assert ".catch(" in call
         assert "Could not save style" in call

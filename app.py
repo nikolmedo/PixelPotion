@@ -174,9 +174,19 @@ def csrf_token() -> str:
     return token
 
 
+def _read_version() -> str:
+    try:
+        return (BASE_DIR / "VERSION").read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+APP_VERSION = _read_version()
+
+
 @app.context_processor
-def inject_csrf_token():
-    return {"csrf_token": csrf_token}
+def inject_template_globals():
+    return {"csrf_token": csrf_token, "app_version": APP_VERSION}
 
 
 def _csrf_failure_response():

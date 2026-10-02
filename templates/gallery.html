@@ -1,85 +1,8 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PixelPotion - Gallery</title>
-    <style>
-        :root {
-            --bg:#0f1117;--surface:#1a1d27;--surface2:#242836;
-            --accent:#6c5ce7;--accent2:#a29bfe;--green:#00b894;
-            --red:#e17055;--yellow:#fdcb6e;--text:#dfe6e9;
-            --text-dim:#636e72;--border:#2d3436;--radius:12px;
-        }
-        *{margin:0;padding:0;box-sizing:border-box;}
-        body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;}
-        .header{background:linear-gradient(135deg,var(--accent),#e84393);padding:20px;text-align:center;}
-        .header h1{font-size:1.6em;}
-        .header p{opacity:.85;font-size:.9em;margin-top:4px;}
-        .nav{display:flex;background:var(--surface);border-bottom:1px solid var(--border);}
-        .nav a{flex:1;text-align:center;padding:14px 10px;color:var(--text-dim);text-decoration:none;font-size:.85em;font-weight:600;transition:all .2s;white-space:nowrap;}
-        .nav a.active{color:var(--accent2);border-bottom:2px solid var(--accent);}
-        .nav a:hover{color:var(--text);}
-        .container{max-width:600px;margin:0 auto;padding:16px;}
-        .flash{padding:12px 16px;border-radius:var(--radius);margin-bottom:12px;font-size:.9em;}
-        .flash.success{background:rgba(0,184,148,.15);border:1px solid var(--green);color:var(--green);}
-        .flash.error{background:rgba(225,112,85,.15);border:1px solid var(--red);color:var(--red);}
-        .flash.info{background:rgba(108,92,231,.15);border:1px solid var(--accent);color:var(--accent2);}
-        .flash.warning{background:rgba(253,203,110,.15);border:1px solid var(--yellow);color:var(--yellow);}
-        .btn{display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border:none;border-radius:8px;font-size:.85em;font-weight:600;cursor:pointer;transition:all .2s;}
-        .btn-primary{background:var(--accent);color:#fff;}
-        .btn-success{background:var(--green);color:#fff;}
-        .btn-danger{background:var(--red);color:#fff;}
-        .btn-outline{background:transparent;color:var(--text-dim);border:1px solid var(--border);}
-        .btn-outline:hover{color:var(--text);border-color:var(--text-dim);}
-        .btn:disabled{opacity:.5;cursor:not-allowed;}
-        .failed-badge{display:inline-block;margin-top:4px;background:rgba(225,112,85,.15);border:1px solid var(--red);color:var(--red);border-radius:6px;padding:2px 6px;font-size:.78em;}
-        .pending-badge{background:var(--red);color:#fff;border-radius:10px;padding:2px 8px;font-size:.75em;font-weight:700;}
-        .form-group{margin-bottom:14px;}
-        .form-group label{display:block;font-size:.82em;font-weight:600;color:var(--text-dim);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px;}
-        .form-group select{width:100%;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.95em;}
-        .form-group select:focus{outline:none;border-color:var(--accent);}
+{% extends "base.html" %}
+{% block title %}Gallery{% endblock %}
+{% block subtitle %}Pending Photos Gallery{% endblock %}
 
-        .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px;}
-        .toolbar{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center;}
-        .empty-state{text-align:center;padding:60px 20px;color:var(--text-dim);}
-        .empty-state .icon{font-size:3em;margin-bottom:12px;}
-        .photo-grid{display:grid;grid-template-columns:1fr;gap:12px;}
-        .photo-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;transition:border .2s;}
-        .photo-card.selected{border-color:var(--accent);}
-        .photo-card .photo-img{width:100%;aspect-ratio:4/3;object-fit:cover;display:block;cursor:pointer;}
-        .photo-card .photo-info{padding:12px;display:flex;align-items:center;justify-content:space-between;}
-        .photo-card .photo-meta{font-size:.82em;color:var(--text-dim);}
-        .photo-card .photo-meta .name{color:var(--text);font-weight:500;font-size:.9em;display:block;margin-bottom:2px;}
-        .photo-actions{display:flex;gap:6px;}
-        .checkbox-label{display:flex;align-items:center;gap:8px;cursor:pointer;}
-        .checkbox-label input[type="checkbox"]{width:18px;height:18px;accent-color:var(--accent);}
-        .wifi-warning{background:rgba(253,203,110,.1);border:1px solid var(--yellow);border-radius:var(--radius);padding:14px;margin-bottom:16px;display:flex;align-items:center;gap:10px;font-size:.88em;color:var(--yellow);}
-        .wifi-warning a{color:var(--accent2);}
-        .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:100;align-items:center;justify-content:center;}
-        .modal-overlay.active{display:flex;}
-        .modal-overlay img{max-width:95vw;max-height:90vh;border-radius:8px;}
-        .modal-close{position:fixed;top:16px;right:16px;background:var(--surface);color:#fff;border:none;border-radius:50%;width:40px;height:40px;font-size:1.3em;cursor:pointer;z-index:101;}
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>🧪 PixelPotion</h1>
-        <p>Pending Photos Gallery</p>
-    </div>
-
-    <div class="nav">
-        <a href="/">📷 Capture</a>
-        <a href="/styles">🎨 Styles</a>
-        <a href="/gallery" class="active">🖼️ Gallery ({{ photos|length }})</a>
-    </div>
-
-    <div class="container">
-        {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}{% for category, message in messages %}
-        <div class="flash {{ category }}">{{ message }}</div>
-        {% endfor %}{% endif %}{% endwith %}
-
+{% block content %}
         {% if not wifi_connected %}
         <div class="wifi-warning">
             ⚠️ No WiFi. You can preview and delete photos, but not process them.
@@ -157,110 +80,13 @@
             {% endfor %}
         </div>
         {% endif %}
-    </div>
 
-    <div class="modal-overlay" id="modal">
-        <button class="modal-close" type="button">✕</button>
-        <img id="modalImg" src="" alt="Preview">
-    </div>
+        <div class="modal-overlay" id="modal">
+            <button class="modal-close" type="button">✕</button>
+            <img id="modalImg" alt="Preview">
+        </div>
+{% endblock %}
 
-    <script>
-        const CSRF_TOKEN = {{ csrf_token()|tojson }};
-
-        function getSelectedStyle() {
-            const sel = document.getElementById('galleryStyle');
-            return sel ? sel.value : '';
-        }
-
-        function postForm(action) {
-            const form = document.createElement('form');
-            form.method = 'post';
-            form.action = action;
-            const tInput = document.createElement('input');
-            tInput.type = 'hidden'; tInput.name = 'csrf_token'; tInput.value = CSRF_TOKEN;
-            form.appendChild(tInput);
-            return form;
-        }
-
-        function processOne(filename) {
-            const form = postForm('/process_photo');
-
-            const fInput = document.createElement('input');
-            fInput.type = 'hidden'; fInput.name = 'filename'; fInput.value = filename;
-            form.appendChild(fInput);
-
-            const sInput = document.createElement('input');
-            sInput.type = 'hidden'; sInput.name = 'style_id'; sInput.value = getSelectedStyle();
-            form.appendChild(sInput);
-
-            document.body.appendChild(form);
-            form.submit();
-        }
-
-        function processAll() {
-            if (!confirm('Process all photos with the selected style?')) return;
-            const form = postForm('/process_all');
-
-            const sInput = document.createElement('input');
-            sInput.type = 'hidden'; sInput.name = 'style_id'; sInput.value = getSelectedStyle();
-            form.appendChild(sInput);
-
-            document.body.appendChild(form);
-            form.submit();
-        }
-
-        function openModal(src) {
-            document.getElementById('modalImg').src = src;
-            document.getElementById('modal').classList.add('active');
-        }
-        function closeModal() {
-            document.getElementById('modal').classList.remove('active');
-        }
-        function photoBoxes() {
-            return document.querySelectorAll('input[name="selected_photos"]');
-        }
-        function syncCard(box) {
-            box.closest('.photo-card').classList.toggle('selected', box.checked);
-        }
-        function toggleSelectAll() {
-            const boxes = Array.from(photoBoxes());
-            const allChecked = boxes.every(b => b.checked);
-            boxes.forEach(b => {
-                b.checked = !allChecked;
-                syncCard(b);
-            });
-        }
-
-        // Wire handlers from data attributes; file names are never interpolated into JS.
-        photoBoxes().forEach(box => box.addEventListener('change', () => syncCard(box)));
-        document.querySelectorAll('.photo-img').forEach(img => {
-            img.addEventListener('click', () => openModal(img.src));
-        });
-        document.querySelectorAll('.process-one').forEach(btn => {
-            btn.addEventListener('click', () => processOne(btn.dataset.filename));
-        });
-        document.querySelectorAll('.delete-photo-form').forEach(form => {
-            form.addEventListener('submit', e => {
-                if (!confirm('Delete this photo?')) e.preventDefault();
-            });
-        });
-        const bulkForm = document.getElementById('bulkForm');
-        if (bulkForm) {
-            bulkForm.addEventListener('submit', e => {
-                const selected = Array.from(photoBoxes()).filter(b => b.checked).length;
-                if (!selected) {
-                    e.preventDefault();
-                    alert('Select at least one photo to delete.');
-                } else if (!confirm(`Delete ${selected} selected photo(s)?`)) {
-                    e.preventDefault();
-                }
-            });
-            document.getElementById('selectAllBtn').addEventListener('click', toggleSelectAll);
-            const processAllBtn = document.getElementById('processAllBtn');
-            if (processAllBtn) processAllBtn.addEventListener('click', processAll);
-        }
-        document.getElementById('modal').addEventListener('click', closeModal);
-        document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
-    </script>
-</body>
-</html>
+{% block scripts %}
+    <script src="{{ url_for('static', filename='gallery.js') }}"></script>
+{% endblock %}
