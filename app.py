@@ -395,6 +395,7 @@ CAMERA_PROFILES = {
 
 def capture_photo() -> str | None:
     with camera_lock:
+        cam = None
         try:
             from picamera2 import Picamera2
             available = Picamera2.global_camera_info()
@@ -416,13 +417,27 @@ def capture_photo() -> str | None:
             time.sleep(2)
             filepath = str(PHOTOS_ORIGINAL / filename)
             cam.capture_file(filepath)
-            cam.stop()
-            cam.close()
             log.info("Photo captured: %s", filepath)
             return filepath
         except Exception as e:
             log.error("Error capturing photo: %s", e)
             return None
+        finally:
+            if cam is not None:
+                _release_camera(cam)
+
+
+def _release_camera(cam):
+    """Stop and close the camera; a failing stop() must not skip close().
+
+    A handle left open keeps libcamera busy and makes every later capture
+    fail until the service restarts.
+    """
+    for step in ("stop", "close"):
+        try:
+            getattr(cam, step)()
+        except Exception as e:
+            log.warning("Camera %s() failed during cleanup: %s", step, e)
 
 
 # ---------------------------------------------------------------------------
