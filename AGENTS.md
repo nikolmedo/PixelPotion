@@ -22,12 +22,50 @@ ai_provider.py          # AI provider abstraction — Gemini today, designed for
 constants.py            # Tuning values (models, retries, timeouts) + loads default_config.json
 default_config.json     # Factory defaults: AP credentials, built-in styles, GPIO pin
 config.json             # Runtime config (API keys, WiFi) — gitignored, created at runtime
-templates/              # Jinja2 templates: index (portal), styles (CRUD), gallery (pending queue)
+templates/base.html     # Shared layout: landmarks, nav, flash region, CSRF meta tag, footer version
+templates/_icons.html   # Inline SVG icon macro (no emoji, no icon fonts, no CDN)
+templates/              # index (camera + settings), styles (CRUD), gallery (pending queue)
+static/app.css          # The whole portal stylesheet (no web fonts: AP mode has no internet)
+static/app.js           # Shared helpers (window.PP): CSRF-aware post(), submitForm(), toast(), pollStatus()
+static/{index,styles,gallery}.js  # One small script per page
 config/                 # hostapd/dnsmasq configs, systemd unit, sudoers whitelist — deployed by install.sh
 install.sh / update.sh  # Pi provisioning and GitHub-release auto-update (not unit-tested)
 deploy-files.txt        # Runtime files both scripts copy to the Pi — single source of truth
+docs/screenshots/       # Portal screenshots used by the README (from a stubbed local demo)
+.github/workflows/ci.yml  # pytest (3.11, 3.13), shellcheck, visudo
 tests/                  # Pytest suite — see "Testing" below
+README.md               # User guide for hobbyists (hardware, setup, troubleshooting)
+CHANGELOG.md            # Keep a Changelog; add user-facing changes under [Unreleased]
+SECURITY.md             # Vulnerability reporting and the security model
 ```
+
+## Routes
+
+All routes live in `app.py`. Every POST needs a CSRF token (see below).
+
+| Method | Path | Purpose | Response |
+| --- | --- | --- | --- |
+| GET | `/` | Camera page: Get started checklist, capture, settings, WiFi | HTML |
+| POST | `/save_config` | Save Gemini key, Telegram token/chat ID, camera module | Redirect + flash |
+| POST | `/save_wifi` | Save WiFi credentials, switch to WiFi in a background thread | Redirect + flash |
+| POST | `/capture` | Capture to pending and enqueue (form field `style_id`) | JSON `{ok, message, filename}` or `{ok: false, error}` |
+| POST | `/set_active_style` | Set the active style (JSON body `{style_id}`) | JSON `{ok, active_style_id}` |
+| GET | `/styles` | Styles page | HTML |
+| POST | `/add_style` | Create a style (`custom_<hex>` id) | Redirect + flash |
+| POST | `/edit_style/<style_id>` | Rename / change the prompt of a style | Redirect + flash |
+| POST | `/delete_style/<style_id>` | Delete a style, re-pick the active one if needed | Redirect + flash |
+| GET | `/gallery` | Pending photos with `Not sent yet` / `Failed: <reason>` | HTML |
+| POST | `/process_photo` | Clear failed flag, set style, enqueue one photo | Redirect + flash |
+| POST | `/process_all` | Same for every pending photo | Redirect + flash |
+| POST | `/delete_photo` | Delete one pending photo and its sidecar | Redirect + flash |
+| POST | `/delete_selected` | Bulk delete (`selected_photos` list) | Redirect + flash |
+| GET | `/pending_photo/<filename>` | Serve a pending photo (via `_resolve_pending`) | JPEG or 404 |
+| GET | `/status_api` | Pipeline status, `wifi`, `pending_count`, active style | JSON |
+| GET | `/scan_wifi` | `sudo -n iwlist wlan0 scan`, sorted SSIDs | JSON list (empty on error) |
+
+A CSRF failure on a JSON endpoint (`JSON_ENDPOINTS`, or a JSON request body) returns
+HTTP 400 `{ok: false, error}`; any other POST flashes "session expired" and redirects
+back to a same-host path, or to `/`.
 
 ## Architecture & Data Flow
 
@@ -104,7 +142,8 @@ Don't break this.
   `csrf_token` form field or `X-CSRF-Token` header doesn't match the session token.
   New `<form method="post">` blocks must include
   `<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">`; new `fetch()` POSTs
-  must send the `X-CSRF-Token` header (templates expose `CSRF_TOKEN` via `|tojson`).
+  must send the `X-CSRF-Token` header. `base.html` puts the token in a
+  `<meta name="csrf-token">` tag and `PP.post()` in `static/app.js` sends it.
   Endpoints called with fetch that expect JSON belong in `JSON_ENDPOINTS`. In tests, the
   `client` fixture sends a valid token automatically; use `plain_client` to test rejection.
 - **Secrets are never rendered.** The WiFi password, Gemini key, and Telegram bot token
@@ -154,13 +193,14 @@ Don't break this.
 ```bash
 python -m venv .venv
 .venv/Scripts/python -m pip install -r requirements-dev.txt   # Windows
-.venv/Scripts/python -m pytest                                # 230 tests (7 POSIX/bash-only, skipped on Windows), ~3s
+.venv/Scripts/python -m pytest                                # 333 tests (7 POSIX/bash-only, skipped on Windows), ~5s
 ```
 
 - Suite layout mirrors the layers: `test_constants`, `test_ai_provider`, `test_app_config`,
   `test_app_network`, `test_app_camera`, `test_app_telegram`, `test_app_pipeline`,
   `test_app_routes` (Flask test client), plus `test_deploy_manifest` (static checks of
-  what install.sh/update.sh deploy).
+  what install.sh/update.sh deploy) and `test_portal_ui` (markup contracts, WCAG contrast of
+  the CSS color tokens).
 - CI (`.github/workflows/ci.yml`) runs the suite on Python 3.11 and 3.13, `shellcheck
   -S warning` on both scripts, and `visudo -cf` on the sudoers file.
 - `tests/conftest.py` is the linchpin: it stubs `logging.FileHandler` before importing
@@ -192,7 +232,7 @@ python -m venv .venv
   and `pixelpotion.service`. `update.sh` pulls the latest GitHub release (only if
   strictly newer, `v` prefix ignored), backs up `config.json`, redeploys code, sudoers
   and unit, reinstalls deps, restarts the service.
-- **Adding a runtime file** (module, template, data file): list it in `deploy-files.txt`,
+- **Adding a runtime file** (module, template, static file, data file): list it in `deploy-files.txt`,
   or it will not reach the Pi. `tests/test_deploy_manifest.py` guards local imports,
   templates, requirements, the service user and the sudoers file.
 - Shell scripts and `config/*` must keep LF endings (`.gitattributes` enforces it).
