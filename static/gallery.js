@@ -27,6 +27,11 @@
         opener = button;
         previewImg.src = img.src;
         previewImg.alt = button.getAttribute('aria-label').replace(/^Preview /, '');
+        // The dialog grows out of the photo that was tapped: start it offset
+        // from the screen centre to that photo's centre.
+        const box = button.getBoundingClientRect();
+        preview.style.setProperty('--from-x', Math.round(box.left + box.width / 2 - window.innerWidth / 2) + 'px');
+        preview.style.setProperty('--from-y', Math.round(box.top + box.height / 2 - window.innerHeight / 2) + 'px');
         preview.showModal();
         document.getElementById('previewClose').focus();
     }

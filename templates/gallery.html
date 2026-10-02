@@ -14,7 +14,7 @@
 
         {% if photos|length == 0 %}
         <div class="empty-state">
-            {{ icon("images", 40) }}
+            <span class="empty-mark">{{ icon("images", 36) }}</span>
             <p>Nothing waiting.</p>
             <p class="hint">Photos that couldn't be sent yet, for example while offline, show up here.</p>
         </div>
@@ -22,7 +22,7 @@
 
         <!-- Style selector for processing -->
         {% if wifi_connected and styles|length > 0 %}
-        <div class="card">
+        <div class="card gallery-style">
             <div class="form-group form-group-last">
                 <label for="galleryStyle">Style to apply</label>
                 <select id="galleryStyle">
@@ -41,11 +41,11 @@
         <form method="post" action="/delete_selected" id="bulkForm">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="toolbar">
-                <button type="button" class="btn btn-outline" id="selectAllBtn">{{ icon("select-all") }} Select all</button>
-                <button type="submit" class="btn btn-danger">{{ icon("trash") }} Delete selected</button>
                 {% if wifi_connected %}
                 <button type="button" class="btn btn-success" id="processAllBtn">{{ icon("send") }} Process all</button>
                 {% endif %}
+                <button type="button" class="btn btn-outline" id="selectAllBtn">{{ icon("select-all") }} Select all</button>
+                <button type="submit" class="btn btn-danger">{{ icon("trash") }} Delete selected</button>
             </div>
         </form>
 
@@ -63,12 +63,14 @@
                     <div class="photo-meta">
                         <span class="name">{{ photo.name }}</span>
                         <span class="meta">{{ photo.date }}, {{ photo.size_kb }} KB</span>
-                        {% if photo.failed_reason %}
-                        <span class="state-tag state-failed">Failed: {{ photo.failed_reason }}</span>
-                        {% else %}
-                        <span class="state-tag state-waiting">Not sent yet</span>
-                        {% endif %}
                     </div>
+                </div>
+                <div class="photo-foot">
+                    {% if photo.failed_reason %}
+                    <span class="state-tag state-failed">Failed: {{ photo.failed_reason }}</span>
+                    {% else %}
+                    <span class="state-tag state-waiting">Not sent yet</span>
+                    {% endif %}
                     <div class="photo-actions">
                         {% if wifi_connected %}
                         <button type="button" class="btn btn-success btn-icon process-one"
