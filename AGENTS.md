@@ -32,24 +32,43 @@ tests/                  # Pytest suite — see "Testing" below
 ## Architecture & Data Flow
 
 ```text
-button press / POST /capture
-  └─ full_pipeline(photo_path=None, style_id=None)        [app.py]
-       ├─ capture_photo()            → Picamera2 → photos/original/
-       ├─ ensure_in_pending()        → copy to photos/pending/ (durability)
-       ├─ is_wifi_connected()        → offline? stop here, photo stays pending
-       ├─ process_with_ai()          → ai_provider.process_image()
-       │    └─ Gemini: model fallback chain × MAX_RETRIES, exponential backoff
-       │       output → photos/processed/styled_*.jpg
-       ├─ send_telegram_photos()     → Telegram Bot API (original + styled)
-       └─ remove_from_pending()      → only after successful delivery
+button press (GPIO thread) / POST /capture (request thread)
+  └─ capture_to_pending(style_id)                       [app.py, camera_lock only]
+       ├─ capture_photo()        → Picamera2 → photos/original/photo_<ts>.jpg
+       ├─ ensure_in_pending()    → temp file + fsync + os.replace → photos/pending/
+       │                           (fails → "Error: could not save photo", stop)
+       ├─ update_photo_state()   → sidecar photos/pending/<photo>.jpg.json {style_id}
+       └─ enqueue_pending(name)  → work_queue (de-duplicated by name)
 
-auto_retry_loop (daemon thread)      → re-runs pipeline for pending photos every 300s
-gpio_button_listener (daemon thread) → debounced GPIO edge → pipeline in a new thread
+worker thread (ONE, started by main) → process_next() → process_pending_photo(name)
+  ├─ is_wifi_connected()         → offline? stop, photo stays pending
+  ├─ AI step, skipped if the sidecar's processed_path still exists
+  │    process_with_ai() → ai_provider.process_image_result() → AIResult
+  │    permanent failure → sidecar failed + failed_reason, stop
+  ├─ send_telegram_photo(original) unless telegram_original_sent
+  ├─ send_telegram_photo(styled)   unless telegram_styled_sent
+  └─ remove_from_pending()       → photo + sidecar, only after both sends
+
+auto_retry_loop (every 300s)     → enqueue retry_candidates() (pending, not failed)
+/process_photo, /process_all     → request_processing() (clear failed, set style) + enqueue
 ```
 
-**The durability contract is the heart of the app:** a photo only leaves
-`photos/pending/` after Telegram delivery succeeds. Any failure (no WiFi, AI error,
-Telegram error) must leave it queued for retry. Don't break this.
+**The durability contract is the heart of the app:**
+
+- A photo is durable once `ensure_in_pending()` returns True. Nothing reaches the AI
+  step without that copy.
+- It leaves `photos/pending/` (with its sidecar) only after **both** Telegram messages
+  were delivered. Any other outcome leaves it queued: no WiFi, AI error, Telegram
+  error, an exception, or a restart.
+- The sidecar records progress so a retry resumes. The styled image is reused (no
+  second AI charge), and only the unsent Telegram messages go out (no duplicates).
+  A missing or unreadable sidecar means "start from scratch with the active style",
+  which is how photos queued by older versions are handled.
+- Permanent AI failures (rejected key, safety block, rejected input) set `failed`.
+  Auto-retry skips such photos; they stay pending, the gallery shows
+  `Failed: <reason>`, and a manual Process (single or all) clears the flag.
+
+Don't break this.
 
 ## Key Design Decisions & Gotchas
 
@@ -58,19 +77,29 @@ Telegram error) must leave it queued for retry. Don't break this.
   (and testable) off-device. Preserve this pattern when touching those functions.
 - **Module-level global state.** `app.config` (dict) and `app.status` are shared by
   reference across routes and threads — mutate them in place, never rebuild/reassign them.
-  Concurrency is guarded by `processing_lock` (pipeline) and `camera_lock` (capture).
+- **Concurrency model.**
+  - `camera_lock`: one capture at a time. Capturing never waits for processing.
+  - `config_lock` (re-entrant): every read-modify-write of `config` plus `save_config()`.
+  - One worker thread drains `work_queue`, so photos are processed one at a time. The
+    queue de-duplicates by name, so a photo is never queued twice.
+  - `status_lock`: always use `update_status()` / `status_snapshot()`, never `status[...]`.
+  - `_photo_state_lock`: sidecar writes vs. photo deletion. A photo deleted
+    mid-processing never gets its sidecar written back.
 - **Import-time side effects in `app.py`.** Logging attaches a `FileHandler` for
   `/home/pi/pixelpotion/pixelpotion.log` and photo directories are created on import.
   Off-device this path doesn't exist — `tests/conftest.py` stubs `logging.FileHandler`
   *before* importing `app`. Keep that in mind if you reorganize imports.
 - **Config layering.** `default_config.json` (factory, in git) is overlaid by
-  `config.json` (runtime, gitignored). `load_config()` merges them; empty `styles` or
-  `active_style_id` fall back to defaults.
+  `config.json` (runtime, gitignored). `load_config()` merges them over a deep copy of
+  the defaults; empty `styles` or `active_style_id` fall back to defaults. An unreadable
+  `config.json` is moved to `config.json.corrupt-<timestamp>` and defaults are loaded.
+  `save_config()` writes atomically (`write_json_atomic`: temp + fsync + `os.replace`).
 - **Camera profiles.** `CAMERA_PROFILES` in `app.py` holds per-sensor controls: IMX708
   needs fixed AWB gains (`ColourGains (1.0, 2.5)`) to avoid a red tint; IMX219 uses auto AWB.
 - **Pending filenames are untrusted.** Any route or helper that turns a portal-supplied
-  filename into a path must go through `_resolve_pending()`, which accepts only a bare
-  file name inside `photos/pending/` and returns `None` otherwise (the service runs as root).
+  filename into a path must go through `_resolve_pending()`. It accepts only a bare
+  `*.jpg` name inside `photos/pending/` and returns `None` otherwise, so sidecars
+  and temp files are never addressable.
 - **Every POST needs a CSRF token.** A `before_request` hook rejects POSTs whose
   `csrf_token` form field or `X-CSRF-Token` header doesn't match the session token.
   New `<form method="post">` blocks must include
@@ -97,23 +126,25 @@ Telegram error) must leave it queued for retry. Don't break this.
   so the whitelist narrows privilege rather than eliminating it; the real fix is the
   planned NetworkManager migration.
 - **Failures degrade, never crash.** Hardware/network helpers (`capture_photo`,
-  `is_wifi_connected`, `send_telegram_photos`, `process_image`) return `None`/`False`
-  on failure instead of raising. Callers rely on this.
-
-### Known Issues
-
-- **Latent encoding bug:** `save_config()`/`load_config()` open `config.json` without
-  `encoding="utf-8"`. Works on the Pi (UTF-8 locale) but crashes with emoji on
-  cp1252 systems. Documented by the `xfail` test
-  `tests/test_app_config.py::TestSaveConfig::test_round_trip_preserves_emoji_content` —
-  it will XPASS once `encoding="utf-8"` is added to both `open()` calls.
+  `is_wifi_connected`, `send_telegram_photo(s)`, `process_image`) return `None`/`False`
+  on failure instead of raising; `process_with_ai` returns a failed `AIResult`.
+  Callers rely on this. `capture_photo` always stops and closes the camera.
+- **AI error classes** (`ai_provider.py`):
+  - 401/403 fail permanently at once.
+  - 400/404 try the next model once, without retries.
+  - 429/5xx retry with backoff, honoring `Retry-After` / `retryDelay`, capped at
+    `MAX_RETRY_DELAY_SECONDS`.
+  - A safety block (no candidates or content, a safety finish reason, a prompt
+    `block_reason`) is permanent.
 
 ## Adding an AI Provider
 
 `ai_provider.py` is the only file involved:
 
-1. Implement `_process_with_<name>(image_path, prompt, api_key) -> str | None`
-   (returns the processed file path, or `None` on failure — never raise to the caller).
+1. Implement `_process_with_<name>(image_path, prompt, api_key) -> AIResult`. Return
+   the processed file path on success, or `AIResult(permanent=..., reason=...)` on
+   failure; never raise to the caller. A plain `str | None` return is also accepted
+   and treated as success / transient failure.
 2. Register it in the `_PROVIDERS` dict.
 3. Switch `AI_PROVIDER` in `constants.py`.
 
@@ -122,7 +153,7 @@ Telegram error) must leave it queued for retry. Don't break this.
 ```bash
 python -m venv .venv
 .venv/Scripts/python -m pip install -r requirements-dev.txt   # Windows
-.venv/Scripts/python -m pytest                                # 157 tests (7 POSIX/bash-only, skipped on Windows), ~2s
+.venv/Scripts/python -m pytest                                # 228 tests (7 POSIX/bash-only, skipped on Windows), ~3s
 ```
 
 - Suite layout mirrors the layers: `test_constants`, `test_ai_provider`, `test_app_config`,
@@ -133,12 +164,17 @@ python -m venv .venv
   -S warning` on both scripts, and `visudo -cf` on the sudoers file.
 - `tests/conftest.py` is the linchpin: it stubs `logging.FileHandler` before importing
   `app`, and its autouse `isolated_state` fixture redirects all paths to `tmp_path` and
-  resets every global (config, status, cached Gemini client) between tests.
+  resets every global (config, status, processing queue, cached Gemini client)
+  between tests. Tests never start the worker thread: they call `process_next(block=False)`
+  or `process_pending_photo()` directly, so the suite stays synchronous.
 - Hardware/SDK modules are injected as `MagicMock`s via `sys.modules` — never add
   `RPi.GPIO`, `picamera2`, or `google-genai` to `requirements-dev.txt`.
 - Test conventions: English only, Arrange-Act-Assert, realistic data (no `foo`/`bar`),
   assert observable behavior (outputs, files, status) over implementation details.
-- Intentionally untested: `auto_retry_loop`, `gpio_button_listener`, `main` — infinite loops and OS glue whose tests would couple without protecting refactors.
+- Intentionally untested: `auto_retry_loop`, `gpio_button_listener`, `_worker_loop`, `main`.
+  They are infinite loops and OS glue whose tests would couple without protecting
+  refactors. Their bodies delegate to tested helpers (`retry_candidates`,
+  `capture_to_pending`, `process_next`).
 
 ## Conventions
 
