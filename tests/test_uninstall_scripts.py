@@ -1,6 +1,7 @@
 """Static and bash-level guards for the uninstall scripts.
 
-uninstall.sh ships with v3.x installs and must undo what install.sh does.
+uninstall.sh ships with v3.x installs and must undo what install.sh does;
+uninstall-legacy.sh is downloaded on its own by v2.0.2-and-earlier users.
 These tests catch drift: when install.sh starts writing a new /etc path,
 the consistency check fails until uninstall.sh handles it too. Paths the
 uninstaller must never delete (home WiFi, the untouched dnsmasq original) are
@@ -18,6 +19,24 @@ import app as pixelpotion
 from conftest import REPO_ROOT
 
 UNINSTALL = "uninstall.sh"
+LEGACY = "uninstall-legacy.sh"
+SCRIPTS = (UNINSTALL, LEGACY)
+# Every system path the v2.0.2 install.sh and app.py wrote, from
+# `git show 2.0.2:install.sh` and `git show 2.0.2:app.py`. Frozen: those
+# releases will never change.
+LEGACY_WRITTEN_PATHS = (
+    "/boot/firmware/config.txt",
+    "/etc/hostapd/hostapd.conf",
+    "/etc/default/hostapd",
+    "/etc/dnsmasq.conf",
+    "/etc/dnsmasq.conf.bak",
+    "/etc/dnsmasq.d/pixelpotion.conf",
+    "/etc/systemd/system/pixelpotion.service",
+    "/etc/dhcpcd.conf",
+    "/etc/wpa_supplicant/wpa_supplicant.conf",
+    "/tmp/wpa_supplicant.conf",
+)
+LEGACY_PIP_PACKAGES = ("flask", "requests", "google-genai", "Pillow")
 SYSTEM_PATH = re.compile(r"/(?:etc|boot)/[\w./-]*\w")
 # Mentioned in the summary as kept, but never deleted or rewritten.
 NEVER_REMOVED = {
@@ -62,18 +81,20 @@ def mutating_lines(text: str) -> list[str]:
 
 
 class TestUninstallScriptBasics:
-    def test_runs_in_strict_mode_as_root_only(self):
+    @pytest.mark.parametrize("script", SCRIPTS)
+    def test_runs_in_strict_mode_as_root_only(self, script):
         # Arrange
-        text = read_script(UNINSTALL)
+        text = read_script(script)
 
         # Act / Assert
         assert text.startswith("#!/bin/bash\n")
         assert re.search(r"^set -euo pipefail$", text, re.M)
         assert re.search(r'^if \[ "\$EUID" -ne 0 \]; then$', text, re.M)
 
-    def test_offers_the_documented_flags(self):
+    @pytest.mark.parametrize("script", SCRIPTS)
+    def test_offers_the_documented_flags(self, script):
         # Arrange
-        text = read_script(UNINSTALL)
+        text = read_script(script)
 
         # Act / Assert
         for flag in ("--yes", "--purge", "--remove-packages",
@@ -86,6 +107,19 @@ class TestUninstallScriptBasics:
         for script in ("install.sh", "update.sh"):
             assert re.search(r'^\s*chmod 0755 .*"\$\{dest\}/uninstall\.sh"', read_script(script), re.M)
 
+    def test_legacy_script_is_not_deployed(self):
+        # Act / Assert — it is for installs that predate the manifest.
+        assert LEGACY not in manifest_entries()
+
+    @pytest.mark.parametrize("script", SCRIPTS)
+    def test_shares_the_same_block_removal_helpers(self, script):
+        # Arrange — the legacy script cannot source a library, so it keeps a copy.
+        names = ("filter_exact_block", "has_exact_block", "remove_exact_block")
+
+        # Act / Assert
+        for name in names:
+            assert shell_function(read_script(script), name) ==                 shell_function(read_script(UNINSTALL), name)
+
     def test_points_legacy_installs_to_the_legacy_script(self):
         # Arrange
         text = read_script(UNINSTALL)
@@ -96,6 +130,53 @@ class TestUninstallScriptBasics:
         # Assert
         assert "SUDOERS_FILE" in detection and "User=root" in detection
         assert "uninstall-legacy.sh" in text
+
+
+class TestLegacyUninstallScript:
+    def test_handles_every_path_the_legacy_install_wrote(self):
+        # Arrange
+        text = read_script(LEGACY)
+
+        # Act
+        missing = [path for path in LEGACY_WRITTEN_PATHS if path not in text]
+
+        # Assert
+        assert not missing, missing
+
+    def test_removes_the_plaintext_wifi_copy_in_tmp(self):
+        # Arrange
+        text = read_script(LEGACY)
+
+        # Act
+        function = shell_function(text, "remove_tmp_wifi_copy")
+
+        # Assert
+        assert 'TMP_WPA_SUPPLICANT_CONF="/tmp/wpa_supplicant.conf"' in text
+        assert 'rm -f "${TMP_WPA_SUPPLICANT_CONF}"' in function
+
+    def test_pip_packages_are_opt_in_and_match_the_legacy_install(self):
+        # Arrange
+        text = read_script(LEGACY)
+
+        # Act
+        packages = re.search(r"^PIP_PACKAGES=\((.*)\)$", text, re.M).group(1).split()
+
+        # Assert
+        assert tuple(packages) == LEGACY_PIP_PACKAGES
+        assert re.search(r"^\s*--remove-pip-packages\) REMOVE_PIP_PACKAGES=1 ;;$", text, re.M)
+        assert "pip3 uninstall --break-system-packages -y" in text
+        assert "--remove-pip-packages" not in read_script(UNINSTALL)
+
+    def test_points_v3_installs_to_the_shipped_uninstaller(self):
+        # Arrange
+        text = read_script(LEGACY)
+
+        # Act
+        detection = shell_function(text, "is_v3_install")
+
+        # Assert
+        assert "SUDOERS_FILE" in detection
+        assert "/home/pi/pixelpotion/uninstall.sh" in text or "${INSTALL_DIR}/uninstall.sh" in text
 
 
 class TestUninstallMatchesInstall:
@@ -111,9 +192,10 @@ class TestUninstallMatchesInstall:
         assert "/etc/sudoers.d/pixelpotion" in installed
         assert not missing, f"install.sh writes paths uninstall.sh ignores: {sorted(missing)}"
 
-    def test_never_deletes_the_home_wifi_or_dnsmasq_original(self):
+    @pytest.mark.parametrize("script", SCRIPTS)
+    def test_never_deletes_the_home_wifi_or_dnsmasq_original(self, script):
         # Arrange
-        text = read_script(UNINSTALL)
+        text = read_script(script)
 
         # Act
         offending = [
@@ -181,6 +263,22 @@ class TestExactBlockRemoval:
 
         # Assert
         assert result.stdout == "hostname\n\ninterface eth0\nstatic ip_address=10.0.0.5/24\n"
+
+    def test_removes_the_block_the_legacy_app_appended(self, tmp_path):
+        # Arrange — v2.0.2 echoed "\ninterface wlan0\n...\n" onto the file,
+        # leaving a blank line before and after the block.
+        conf = tmp_path / "dhcpcd.conf"
+        conf.write_text(
+            DHCPCD_WITH_USER_STANZA
+            + "\ninterface wlan0\n    static ip_address=192.168.4.1/24\n    nohook wpa_supplicant\n\n"
+        )
+
+        # Act
+        result = self.run_filter(LEGACY, conf, self.AP_LINES)
+
+        # Assert
+        assert result.returncode == 0
+        assert result.stdout == DHCPCD_WITH_USER_STANZA
 
     def test_reports_absent_block_and_changes_nothing(self, tmp_path):
         # Arrange

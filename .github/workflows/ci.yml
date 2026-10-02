@@ -32,7 +32,7 @@ jobs:
       - uses: actions/checkout@v4
       # shellcheck is preinstalled on GitHub's Ubuntu runners.
       - name: Lint install, update and uninstall scripts
-        run: shellcheck -S warning install.sh update.sh uninstall.sh
+        run: shellcheck -S warning install.sh update.sh uninstall.sh uninstall-legacy.sh
       # Same check install.sh runs before enabling the whitelist on the Pi.
       - name: Validate sudoers whitelist syntax
         run: |
