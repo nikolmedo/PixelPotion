@@ -135,3 +135,32 @@ class TestSendTelegramPhotos:
         # Assert
         assert BOT_TOKEN not in caplog.text
         assert "/bot<redacted>/sendPhoto" in caplog.text
+
+
+class TestRedact:
+    def test_replaces_every_occurrence_of_each_secret(self):
+        # Arrange
+        message = (
+            f"POST /bot{BOT_TOKEN}/sendPhoto failed; "
+            "retrying /bot7123456789%3AAAHk3mP9qRsT2uVwXyZ1bCdEfGhIjKlMnOp/sendPhoto"
+        )
+
+        # Act
+        result = pixelpotion.redact(
+            message, BOT_TOKEN, "7123456789%3AAAHk3mP9qRsT2uVwXyZ1bCdEfGhIjKlMnOp"
+        )
+
+        # Assert
+        assert result == (
+            "POST /bot<redacted>/sendPhoto failed; retrying /bot<redacted>/sendPhoto"
+        )
+
+    def test_empty_secret_leaves_the_message_untouched(self):
+        # Arrange — str.replace("", x) would splice x between every character.
+        message = "HTTPSConnectionPool(host='api.telegram.org', port=443)"
+
+        # Act
+        result = pixelpotion.redact(message, "", "")
+
+        # Assert
+        assert result == message

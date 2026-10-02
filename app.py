@@ -137,7 +137,10 @@ def _csrf_failure_response():
     referrer = request.referrer
     if referrer:
         parsed = urlparse(referrer)
-        if parsed.netloc == request.host and parsed.path.startswith("/"):
+        # `//host` and `/\host` are protocol-relative to browsers: only a
+        # single leading slash keeps the redirect on this device.
+        if (parsed.netloc == request.host and parsed.path.startswith("/")
+                and not parsed.path.startswith(("//", "/\\"))):
             target = parsed.path
     return redirect(target)
 
@@ -427,11 +430,20 @@ def send_telegram_photos(original_path, processed_path, style_name=""):
     except Exception as e:
         # requests puts the request URL — which embeds the bot token — in its
         # exception text, so never log it verbatim.
-        message = str(e)
-        for secret in {token, quote(token, safe="")}:
-            message = message.replace(secret, "<redacted>")
-        log.error("Error sending via Telegram: %s", message)
+        log.error("Error sending via Telegram: %s",
+                  redact(str(e), token, quote(token, safe="")))
         return False
+
+
+def redact(message: str, *secrets_to_hide: str) -> str:
+    """Replace every non-empty secret in `message` with `<redacted>`.
+
+    Empty secrets are skipped: `str.replace("", ...)` would insert the
+    marker between every character.
+    """
+    for secret in sorted({s for s in secrets_to_hide if s}, key=len, reverse=True):
+        message = message.replace(secret, "<redacted>")
+    return message
 
 
 # ---------------------------------------------------------------------------
@@ -799,28 +811,43 @@ def delete_photo_route():
     if path is None:
         flash("Invalid file name.", "error")
         return redirect(url_for("gallery"))
-    if path.exists():
-        path.unlink()
+    if not path.exists():
+        flash(f"{fn} was not found.", "error")
+    elif _delete_pending_file(path):
         flash(f"{fn} deleted.", "success")
     else:
-        flash(f"{fn} was not found.", "error")
+        flash(f"Could not delete {fn}.", "error")
     return redirect(url_for("gallery"))
+
+
+def _delete_pending_file(path: Path) -> bool:
+    """Delete one pending photo; False (logged) if the filesystem refuses."""
+    try:
+        path.unlink()
+        return True
+    except OSError as e:
+        log.error("Could not delete %s: %s", path.name, e)
+        return False
 
 
 @app.route("/delete_selected", methods=["POST"])
 def delete_selected_route():
     fns = request.form.getlist("selected_photos")
-    deleted, invalid = 0, 0
+    deleted, invalid, failed = 0, 0, 0
     for fn in fns:
         path = _resolve_pending(fn)
         if path is None:
             invalid += 1
             continue
         if path.exists():
-            path.unlink()
-            deleted += 1
+            if _delete_pending_file(path):
+                deleted += 1
+            else:
+                failed += 1
     if invalid:
         flash(f"Skipped {invalid} invalid file name(s).", "error")
+    if failed:
+        flash(f"Could not delete {failed} photo(s).", "error")
     flash(f"{deleted} photo(s) deleted.", "success")
     return redirect(url_for("gallery"))
 

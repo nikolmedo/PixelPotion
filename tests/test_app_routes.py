@@ -400,6 +400,58 @@ class TestGalleryActions:
         assert ("error", "Skipped 2 invalid file name(s).") in flashes
         assert ("success", "1 photo(s) deleted.") in flashes
 
+    def test_delete_photo_reports_a_file_the_system_refuses_to_delete(
+        self, client, isolated_state, monkeypatch
+    ):
+        # Arrange
+        target = isolated_state.pending / "photo_20260609_201500.jpg"
+        target.write_bytes(make_jpeg_bytes())
+
+        def refuse(self, *args, **kwargs):
+            raise PermissionError(13, "Permission denied", str(self))
+
+        monkeypatch.setattr(type(target), "unlink", refuse)
+
+        # Act
+        response = client.post("/delete_photo", data={"filename": target.name})
+
+        # Assert — a flash message, not a 500.
+        assert response.status_code == 302
+        assert target.exists()
+        assert (
+            "error", "Could not delete photo_20260609_201500.jpg."
+        ) in get_flashes(client)
+
+    def test_delete_selected_keeps_going_after_a_refused_file(
+        self, client, isolated_state, monkeypatch
+    ):
+        # Arrange
+        locked = isolated_state.pending / "photo_20260608_110001.jpg"
+        removable = isolated_state.pending / "photo_20260608_110002.jpg"
+        for photo in (locked, removable):
+            photo.write_bytes(make_jpeg_bytes())
+        real_unlink = type(locked).unlink
+
+        def unlink_unless_locked(self, *args, **kwargs):
+            if self.name == locked.name:
+                raise PermissionError(13, "Permission denied", str(self))
+            return real_unlink(self, *args, **kwargs)
+
+        monkeypatch.setattr(type(locked), "unlink", unlink_unless_locked)
+
+        # Act
+        response = client.post(
+            "/delete_selected", data={"selected_photos": [locked.name, removable.name]}
+        )
+
+        # Assert
+        assert response.status_code == 302
+        assert locked.exists()
+        assert not removable.exists()
+        flashes = get_flashes(client)
+        assert ("error", "Could not delete 1 photo(s).") in flashes
+        assert ("success", "1 photo(s) deleted.") in flashes
+
     def test_process_photo_rejects_paths_outside_pending(
         self, client, fake_thread, monkeypatch, isolated_state
     ):
@@ -606,6 +658,24 @@ class TestCsrfProtection:
         assert response.headers["Location"] == "/"
         assert "pixar" in [s["id"] for s in pixelpotion.config["styles"]]
 
+    @pytest.mark.parametrize("referrer", [
+        "http://localhost//evil.example.com/styles",
+        "http://localhost/\\evil.example.com/styles",
+    ])
+    def test_rejection_ignores_protocol_relative_referrer_path(
+        self, plain_client, referrer
+    ):
+        # Arrange — same host, but browsers read `//host` as another site.
+        seed_csrf_session(plain_client)
+
+        # Act
+        response = plain_client.post(
+            "/delete_style/pixar", headers={"Referer": referrer}
+        )
+
+        # Assert
+        assert response.headers["Location"] == "/"
+
     def test_form_field_token_is_accepted(self, plain_client):
         # Arrange
         seed_csrf_session(plain_client)
@@ -772,3 +842,20 @@ class TestTemplateInjectionSafety:
         )
         assert "onclick=\"processOne(" not in body
         assert "openModal('" not in body
+
+
+class TestStyleSelectionFeedback:
+    @pytest.mark.parametrize("page", ["/", "/styles"])
+    def test_failed_style_save_is_reported_to_the_user(self, client, page):
+        # Act
+        body = client.get(page).get_data(as_text=True)
+
+        # Assert — the fetch checks the HTTP status and handles errors
+        # (browser behavior itself is not exercised by this suite).
+        call = re.search(
+            r"fetch\('/set_active_style'.*?\n        \}", body, re.S
+        ).group(0)
+        assert "'X-CSRF-Token': CSRF_TOKEN" in call
+        assert "if (!r.ok)" in call
+        assert ".catch(" in call
+        assert "Could not save style" in call
