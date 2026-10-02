@@ -45,16 +45,10 @@ def _try_generate_gemini(client, model: str, image_data: bytes, prompt: str) -> 
     from google.genai import types
 
     image_part = types.Part.from_bytes(data=image_data, mime_type="image/jpeg")
-
-    if "2.5-flash-image" in model or "3.1-flash" in model:
-        gen_config = types.GenerateContentConfig(
-            response_modalities=["IMAGE"],
-            image_config=types.ImageConfig(aspect_ratio="3:4"),
-        )
-    else:
-        gen_config = types.GenerateContentConfig(
-            response_modalities=["TEXT", "IMAGE"],
-        )
+    gen_config = types.GenerateContentConfig(
+        response_modalities=["IMAGE"],
+        image_config=types.ImageConfig(aspect_ratio="3:4"),
+    )
 
     response = client.models.generate_content(
         model=model, contents=[prompt, image_part], config=gen_config

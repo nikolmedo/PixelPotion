@@ -14,9 +14,8 @@ AI_PROVIDER = "gemini"  # Options: "gemini" | "openai" | "anthropic"
 # Gemini models (tried in order, first success wins)
 # ---------------------------------------------------------------------------
 GEMINI_MODELS = [
-    "gemini-3.1-flash-image-preview",
-    "gemini-2.5-flash-image",
-    "gemini-2.0-flash-exp-image-generation",
+    "gemini-3.1-flash-image",
+    "gemini-3.1-flash-lite-image",
 ]
 
 MAX_RETRIES = 3

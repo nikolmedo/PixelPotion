@@ -94,7 +94,7 @@ class TestTryGenerateGemini:
 
         # Act
         result = ai_provider._try_generate_gemini(
-            client, "gemini-2.5-flash-image", make_jpeg_bytes(), PIXAR_PROMPT
+            client, "gemini-3.1-flash-image", make_jpeg_bytes(), PIXAR_PROMPT
         )
 
         # Assert
@@ -109,7 +109,7 @@ class TestTryGenerateGemini:
 
         # Act
         result = ai_provider._try_generate_gemini(
-            client, "gemini-2.5-flash-image", make_jpeg_bytes(), PIXAR_PROMPT
+            client, "gemini-3.1-flash-image", make_jpeg_bytes(), PIXAR_PROMPT
         )
 
         # Assert
@@ -122,14 +122,17 @@ class TestTryGenerateGemini:
 
         # Act
         result = ai_provider._try_generate_gemini(
-            client, "gemini-2.0-flash-exp-image-generation",
+            client, "gemini-3.1-flash-lite-image",
             make_jpeg_bytes(), PIXAR_PROMPT,
         )
 
         # Assert
         assert result is None
 
-    def test_image_models_request_image_only_modality(self, fake_genai):
+    @pytest.mark.parametrize("model", GEMINI_MODELS)
+    def test_every_configured_model_requests_image_only_modality(
+        self, fake_genai, model
+    ):
         # Arrange
         client = MagicMock()
         client.models.generate_content.return_value = make_gemini_response(
@@ -138,30 +141,13 @@ class TestTryGenerateGemini:
 
         # Act
         ai_provider._try_generate_gemini(
-            client, "gemini-2.5-flash-image", make_jpeg_bytes(), PIXAR_PROMPT
-        )
-
-        # Assert — model-routing contract: dedicated image models get IMAGE-only.
-        _, kwargs = fake_genai.types.GenerateContentConfig.call_args
-        assert kwargs["response_modalities"] == ["IMAGE"]
-        fake_genai.types.ImageConfig.assert_called_once_with(aspect_ratio="3:4")
-
-    def test_legacy_models_request_text_and_image_modalities(self, fake_genai):
-        # Arrange
-        client = MagicMock()
-        client.models.generate_content.return_value = make_gemini_response(
-            make_jpeg_bytes()
-        )
-
-        # Act
-        ai_provider._try_generate_gemini(
-            client, "gemini-2.0-flash-exp-image-generation",
-            make_jpeg_bytes(), PIXAR_PROMPT,
+            client, model, make_jpeg_bytes(), PIXAR_PROMPT
         )
 
         # Assert
         _, kwargs = fake_genai.types.GenerateContentConfig.call_args
-        assert kwargs["response_modalities"] == ["TEXT", "IMAGE"]
+        assert kwargs["response_modalities"] == ["IMAGE"]
+        fake_genai.types.ImageConfig.assert_called_once_with(aspect_ratio="3:4")
 
 
 class TestRetryAndFallback:
