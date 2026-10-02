@@ -342,6 +342,25 @@ class TestErrorClassification:
         assert result.reason == "blocked by safety filters"
         assert generate_calls(fake_genai) == 1
 
+    @pytest.mark.parametrize(
+        "unspecified", ["BLOCKED_REASON_UNSPECIFIED", "BLOCK_REASON_UNSPECIFIED"]
+    )
+    def test_unspecified_block_reason_is_not_a_safety_block(
+        self, fake_genai, source_photo, unspecified
+    ):
+        # Arrange — a normal answer that carries prompt_feedback with the zero value.
+        response = make_gemini_response(make_jpeg_bytes())
+        response.prompt_feedback = MagicMock(block_reason=unspecified)
+        fake_genai.client.models.generate_content.return_value = response
+
+        # Act
+        result = ai_provider.process_image_result(
+            source_photo, PIXAR_PROMPT, GEMINI_API_KEY
+        )
+
+        # Assert
+        assert result.ok is True
+
     def test_safety_finish_reason_fails_permanently(self, fake_genai, source_photo):
         # Arrange
         response = make_gemini_response(None)
