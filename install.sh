@@ -54,7 +54,7 @@ deploy_runtime_files() {
         install -D -m 0644 "${src}/${rel}" "${dest}/${rel}"
         echo "  ${rel}"
     done < "${src}/deploy-files.txt"
-    chmod 0755 "${dest}/app.py" "${dest}/update.sh"
+    chmod 0755 "${dest}/app.py" "${dest}/update.sh" "${dest}/uninstall.sh"
 }
 
 # Validate the sudoers whitelist before it goes live. The staged name contains

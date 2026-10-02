@@ -6,6 +6,17 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `uninstall.sh` removes a v3.x install: the service, hotspot settings and sudo rules.
+  Photos and `config.json` are moved to a private backup folder unless you pass `--purge`.
+  Your home WiFi connection is kept. See the README, "Uninstalling".
+- `uninstall-legacy.sh` does the same for installs from v2.0.2 or earlier, and also deletes
+  the WiFi password copy those versions left in `/tmp`. Download it from the repository.
+- Optional flags for both: `--remove-packages` (hostapd and dnsmasq) and
+  `--restore-boot-config` (the camera lines in `config.txt`). The legacy script also has
+  `--remove-pip-packages`.
+
 ## [3.1.0] - 2026-10-02
 
 ### Changed

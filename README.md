@@ -27,6 +27,7 @@ You set it up and use it from a web page on your phone. No app to install.
 - [First setup](#first-setup)
 - [Everyday use](#everyday-use)
 - [Updating](#updating)
+- [Uninstalling](#uninstalling)
 - [Privacy and costs](#privacy-and-costs)
 - [Troubleshooting](#troubleshooting)
 - [Development](#development)
@@ -234,6 +235,53 @@ are kept. Add `--force` to reinstall the latest release even if you already have
 > After that, `update.sh` works as described above.
 
 See [CHANGELOG.md](CHANGELOG.md) for what changed in each version.
+
+## Uninstalling
+
+Which script you need depends on the version you installed. If
+`/home/pi/pixelpotion/uninstall.sh` exists, you have v3.x.
+
+**v3.x:**
+
+```bash
+sudo bash /home/pi/pixelpotion/uninstall.sh
+```
+
+**v2.0.2 or earlier:** those versions shipped no uninstaller. Download
+`uninstall-legacy.sh` from this repository and run it:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/nikolmedo/PixelPotion/main/uninstall-legacy.sh
+sudo bash uninstall-legacy.sh
+```
+
+(Or `git clone https://github.com/nikolmedo/PixelPotion` and run it from the clone.)
+Each script checks the install first and tells you to use the other one if you picked the
+wrong one.
+
+Both ask for confirmation, then:
+
+- **Remove** the `pixelpotion` service, the `PixelPotion-Setup` hotspot settings (hostapd
+  and dnsmasq files, and the hotspot block in `/etc/dhcpcd.conf`, saved first as
+  `/etc/dhcpcd.conf.pixelpotion-uninstall-<date>`), the sudo rules (v3.x), the WiFi
+  password copy in `/tmp` (v2.0.2 or earlier) and `/home/pi/pixelpotion`.
+- **Keep your photos and settings.** `photos/` and `config.json` are moved to
+  `/home/pi/pixelpotion-backup-<date>/`, readable only by the `pi` user, because
+  `config.json` holds your API keys.
+- **Keep** your home WiFi connection (`/etc/wpa_supplicant/wpa_supplicant.conf`), the apt
+  packages and the camera settings in `/boot/firmware/config.txt`, unless you ask otherwise.
+
+| Option | What it does |
+|---|---|
+| `--yes` | Do not ask for confirmation. |
+| `--purge` | Delete photos and `config.json` instead of backing them up. |
+| `--remove-packages` | Also remove the `hostapd` and `dnsmasq` packages. |
+| `--restore-boot-config` | Remove the three camera lines the installer added to `/boot/firmware/config.txt`. Leave it off if other camera software uses the camera. |
+| `--remove-pip-packages` | v2.0.2 or earlier only: uninstall `flask`, `requests`, `google-genai` and `Pillow` from the system Python. Other programs may need them. |
+| `--force` | Run even if the script thinks you picked the wrong one. |
+
+Running a script again is safe: it reports "Nothing to remove". Reboot afterwards
+(`sudo reboot`) so the WiFi settings take effect.
 
 ## Privacy and costs
 
