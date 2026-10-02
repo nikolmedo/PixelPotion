@@ -1,68 +1,45 @@
 {% extends "base.html" %}
 {% from "_icons.html" import icon %}
 {% block title %}Styles{% endblock %}
-{% block subtitle %}Style Management{% endblock %}
+{% block subtitle %}The looks Gemini can give your photos{% endblock %}
 
 {% block content %}
-        <!-- Add new style -->
-        <div class="card">
-            <h2><span class="icon">➕</span> Create New Style</h2>
-            <form method="post" action="/add_style">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <div class="form-group">
-                    <label for="newStyleName">Style name</label>
-                    <input type="text" name="style_name" id="newStyleName" placeholder="e.g. Comic Book, Oil Painting, Cyberpunk..." required>
-                </div>
-                <div class="form-group">
-                    <label for="newStylePrompt">Prompt for Gemini</label>
-                    <textarea name="style_prompt" id="newStylePrompt" aria-describedby="newStyleHint" placeholder="TASK: Transform this photograph into...&#10;&#10;Describe the style you want to apply. Be specific about:&#10;- Visual style&#10;- How to handle people (keep likeness)&#10;- How to handle the background&#10;- Composition rules" required></textarea>
-                    <p class="hint" id="newStyleHint">
-                        Tip: Always start with "TASK: Transform this photograph into..." and
-                        end with "OUTPUT: Generate the transformed image now." for best results.
-                    </p>
-                </div>
-                <button type="submit" class="btn btn-success btn-block">➕ Create Style</button>
-            </form>
-        </div>
-
-        <!-- Existing styles -->
-        <div class="card">
-            <h2><span class="icon">🎨</span> Available Styles ({{ styles|length }})</h2>
+        <!-- Existing styles, shown as labels on a shelf -->
+        <section class="card" aria-labelledby="shelfTitle">
+            <h2 id="shelfTitle">{{ icon("palette") }} Your styles <span class="count">{{ styles|length }}</span></h2>
 
             {% if styles|length == 0 %}
             <div class="empty-state">
-                <div class="icon">🎨</div>
-                <p>No styles configured</p>
-                <p style="font-size:.85em;margin-top:8px;">Create your first style above</p>
+                <p>No styles yet.</p>
+                <p class="hint">Create your first style below, then pick it on the Camera page.</p>
             </div>
             {% endif %}
 
+            <div class="style-shelf">
             {% for style in styles %}
             <div class="style-card {{ 'is-active' if style.id == active_style_id else '' }}" data-style-id="{{ style.id }}">
                 <h3 class="style-title">
                     <button type="button" class="style-header" aria-expanded="false"
                             aria-controls="style-body-{{ loop.index }}">
                         <span class="name">{{ style.name }}</span>
-                        {% if style.id == active_style_id %}<span class="badge">Active</span>{% endif %}
+                        {% if style.id == active_style_id %}<span class="badge">In use</span>{% endif %}
                         <span class="toggle-icon">{{ icon("chevron") }}</span>
                     </button>
                 </h3>
                 <div class="style-body" id="style-body-{{ loop.index }}" hidden>
                     <!-- View mode -->
                     <div class="style-view">
-                        <div class="form-group" style="margin-bottom:8px;">
-                            <p class="field-label">Prompt</p>
-                            <div class="prompt-preview">{{ style.prompt }}</div>
-                        </div>
+                        <p class="field-label">Prompt</p>
+                        <div class="prompt-preview">{{ style.prompt }}</div>
                         <div class="style-actions">
-                            <button type="button" class="btn btn-outline btn-sm edit-style">✏️ Edit</button>
                             {% if style.id != active_style_id %}
-                            <button type="button" class="btn btn-primary btn-sm activate-style">⭐ Activate</button>
+                            <button type="button" class="btn btn-primary btn-sm activate-style">{{ icon("star") }} Use this style</button>
                             {% endif %}
-                            <form method="post" action="/delete_style/{{ style.id }}" style="display:inline;"
-                                  class="delete-style-form" data-style-name="{{ style.name }}">
+                            <button type="button" class="btn btn-outline btn-sm edit-style">{{ icon("edit") }} Edit</button>
+                            <form method="post" action="/delete_style/{{ style.id }}" class="inline-form delete-style-form"
+                                  data-style-name="{{ style.name }}">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                <button type="submit" class="btn btn-danger btn-sm">🗑️ Delete</button>
+                                <button type="submit" class="btn btn-danger btn-sm">{{ icon("trash") }} Delete</button>
                             </form>
                         </div>
                     </div>
@@ -77,10 +54,10 @@
                             </div>
                             <div class="form-group">
                                 <label for="edit-prompt-{{ loop.index }}">Prompt</label>
-                                <textarea name="style_prompt" id="edit-prompt-{{ loop.index }}" required style="min-height:180px;">{{ style.prompt }}</textarea>
+                                <textarea name="style_prompt" id="edit-prompt-{{ loop.index }}" class="tall" required>{{ style.prompt }}</textarea>
                             </div>
                             <div class="style-actions">
-                                <button type="submit" class="btn btn-success btn-sm">💾 Save</button>
+                                <button type="submit" class="btn btn-primary btn-sm">Save changes</button>
                                 <button type="button" class="btn btn-outline btn-sm cancel-edit">Cancel</button>
                             </div>
                         </form>
@@ -88,20 +65,41 @@
                 </div>
             </div>
             {% endfor %}
-        </div>
+            </div>
+        </section>
+
+        <!-- Add new style -->
+        <section class="card" aria-labelledby="newStyleTitle">
+            <h2 id="newStyleTitle">{{ icon("plus") }} Create a style</h2>
+            <form method="post" action="/add_style">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="form-group">
+                    <label for="newStyleName">Style name</label>
+                    <input type="text" name="style_name" id="newStyleName" placeholder="e.g. Comic Book, Oil Painting, Cyberpunk..." required>
+                </div>
+                <div class="form-group">
+                    <label for="newStylePrompt">Prompt for Gemini</label>
+                    <textarea name="style_prompt" id="newStylePrompt" aria-describedby="newStyleHint" placeholder="TASK: Transform this photograph into...&#10;&#10;Describe the style you want to apply. Be specific about:&#10;- Visual style&#10;- How to handle people (keep likeness)&#10;- How to handle the background&#10;- Composition rules" required></textarea>
+                    <p class="hint" id="newStyleHint">
+                        Start with "TASK: Transform this photograph into..." and
+                        end with "OUTPUT: Generate the transformed image now." for best results.
+                    </p>
+                </div>
+                <button type="submit" class="btn btn-primary btn-block">Create style</button>
+            </form>
+        </section>
 
         <!-- Tips -->
-        <div class="card">
-            <h2><span class="icon">💡</span> Prompt Tips</h2>
-            <div class="tips">
-                <p style="margin-bottom:8px;">For best results:</p>
-                <p><strong>1.</strong> Always start with <code>TASK: Transform this photograph into...</code></p>
-                <p><strong>2.</strong> Explicitly ask for people to remain recognizable</p>
-                <p><strong>3.</strong> Describe how to handle both indoor and outdoor backgrounds</p>
-                <p><strong>4.</strong> Include "No text, watermarks, or logos"</p>
-                <p><strong>5.</strong> End with <code>OUTPUT: Generate the transformed image now.</code></p>
-            </div>
-        </div>
+        <section class="card" aria-labelledby="tipsTitle">
+            <h2 id="tipsTitle">{{ icon("lightbulb") }} Writing a good prompt</h2>
+            <ul class="tips">
+                <li>Start with <code>TASK: Transform this photograph into...</code></li>
+                <li>Ask for people to stay recognizable.</li>
+                <li>Say how to handle both indoor and outdoor backgrounds.</li>
+                <li>Include "No text, watermarks, or logos".</li>
+                <li>End with <code>OUTPUT: Generate the transformed image now.</code></li>
+            </ul>
+        </section>
 {% endblock %}
 
 {% block scripts %}

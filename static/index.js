@@ -39,6 +39,7 @@
             .finally(() => {
                 captureBtn.disabled = false;
                 isCapturing = false;
+                poller.now();
             });
     }
     captureBtn.addEventListener('click', doCapture);
@@ -109,14 +110,61 @@
     }
     document.getElementById('scanWifiBtn').addEventListener('click', scanWifi);
 
-    // Poll status: the button follows the camera, the text follows processing.
-    setInterval(() => {
-        fetch('/status_api').then(r => r.json()).then(data => {
-            const el = document.getElementById('statusText');
-            el.textContent = data.last_action;
-            el.classList.toggle('processing', data.processing || data.capturing);
-            captureBtn.disabled = data.capturing;
-            isCapturing = data.capturing;
+    // Progress tracker: Capture -> Brew -> Send -> Delivered.
+    const TRACKER_ORDER = ['capturing', 'brewing', 'sending', 'done'];
+    const STATE_TEXT = {
+        done: 'done', active: 'in progress', failed: 'failed',
+        waiting: 'waiting for WiFi', todo: 'not started',
+    };
+    const tracker = document.getElementById('tracker');
+
+    function trackerStates(step, failedStep) {
+        switch (step) {
+            case 'capturing': return ['active', 'todo', 'todo', 'todo'];
+            case 'queued': return ['done', 'todo', 'todo', 'todo'];
+            case 'waiting_wifi': return ['done', 'waiting', 'todo', 'todo'];
+            case 'brewing': return ['done', 'active', 'todo', 'todo'];
+            case 'sending': return ['done', 'done', 'active', 'todo'];
+            case 'done': return ['done', 'done', 'done', 'done'];
+            case 'failed': {
+                const at = Math.max(0, TRACKER_ORDER.indexOf(failedStep));
+                return TRACKER_ORDER.map((_, i) => i < at ? 'done' : (i === at ? 'failed' : 'todo'));
+            }
+            default: return ['todo', 'todo', 'todo', 'todo'];
+        }
+    }
+
+    function renderTracker(step, failedStep) {
+        tracker.dataset.step = step;
+        const states = trackerStates(step, failedStep);
+        tracker.querySelectorAll('li').forEach((li, i) => {
+            li.dataset.state = states[i];
+            li.querySelector('.tracker-state').textContent = ': ' + STATE_TEXT[states[i]];
+            if (states[i] === 'active' || states[i] === 'waiting') li.setAttribute('aria-current', 'step');
+            else li.removeAttribute('aria-current');
         });
-    }, 2000);
+    }
+    renderTracker(tracker.dataset.step, tracker.dataset.failedStep);
+
+    const BUSY_STEPS = ['capturing', 'queued', 'brewing', 'sending'];
+    function isBusy(data) {
+        return data.capturing || data.processing || BUSY_STEPS.includes(data.step);
+    }
+
+    function renderWifi(connected) {
+        const chip = document.getElementById('wifiChip');
+        chip.querySelector('.dot').className = 'dot ' + (connected ? 'green' : 'red');
+        chip.querySelector('.chip-text').textContent = 'WiFi: ' + (connected ? 'Connected' : 'AP Mode');
+    }
+
+    // The button follows the camera, the text and tracker follow processing.
+    const poller = PP.pollStatus(data => {
+        const el = document.getElementById('statusText');
+        if (el.textContent.trim() !== data.last_action) el.textContent = data.last_action;
+        el.classList.toggle('processing', isBusy(data));
+        renderTracker(data.step, data.failed_step);
+        renderWifi(data.wifi);
+        captureBtn.disabled = data.capturing;
+        isCapturing = data.capturing;
+    }, data => (data === null || isBusy(data) ? 2000 : 10000));
 })();

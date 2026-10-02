@@ -180,7 +180,7 @@ class TestSetupFlow:
         assert "Get started" in body
         for anchor in ("#gemini", "#telegram", "#wifi"):
             assert parsed.find("a", href=anchor), anchor
-            assert parsed.find("fieldset", id=anchor[1:]) or parsed.find("div", id=anchor[1:])
+            assert anchor[1:] in {attrs.get("id") for _, attrs in parsed.tags}, anchor
         assert body.count("To do:") == 3
         assert "/newbot" in body
         assert "mobile data" in body
@@ -405,11 +405,16 @@ def contrast_ratio(foreground: str, background: str) -> float:
 
 # Every text colour paired with each background it is drawn on.
 TEXT_PAIRS = [
-    ("text", "bg"), ("text", "surface"), ("text", "surface2"),
-    ("text-dim", "bg"), ("text-dim", "surface"), ("text-dim", "surface2"),
-    ("accent2", "surface"),
-    ("on-accent", "accent"), ("on-success", "green"),
-    ("on-danger", "red"), ("on-warning", "yellow"),
+    ("paper", "ink"), ("paper", "ink-raised"), ("paper", "ink-well"),
+    ("paper-dim", "ink"), ("paper-dim", "ink-raised"), ("paper-dim", "ink-well"),
+    ("safelight-text", "ink"), ("safelight-text", "ink-raised"),
+    ("on-paper", "paper"), ("on-safelight", "safelight"),
+    ("on-verdigris", "verdigris"), ("on-amber", "amber"),
+]
+# Borders and markers that identify controls or states need 3:1.
+UI_PAIRS = [
+    ("line-strong", "ink-raised"), ("paper-dim", "ink"),
+    ("verdigris", "ink-raised"), ("amber", "ink-raised"), ("focus", "ink"),
 ]
 
 
@@ -425,6 +430,128 @@ class TestColourContrast:
         # Assert
         assert ratio >= 4.5, f"--{foreground} on --{background}: {ratio:.2f}"
 
+    @pytest.mark.parametrize("foreground, background", UI_PAIRS)
+    def test_control_borders_and_markers_meet_wcag_aa(self, foreground, background):
+        # Arrange
+        tokens = css_tokens()
+
+        # Act
+        ratio = contrast_ratio(tokens[foreground], tokens[background])
+
+        # Assert
+        assert ratio >= 3.0, f"--{foreground} on --{background}: {ratio:.2f}"
+
+    def test_reduced_motion_is_respected(self):
+        # Act
+        css = (STATIC_DIR / "app.css").read_text(encoding="utf-8")
+
+        # Assert
+        assert "@media (prefers-reduced-motion: reduce)" in css
+
     def test_contrast_maths_matches_the_wcag_reference(self):
         # Act / Assert — black on white is the 21:1 maximum.
         assert contrast_ratio("#000000", "#ffffff") == pytest.approx(21.0)
+
+
+class TestLiveStatus:
+    def test_tracker_starts_from_the_current_pipeline_step(self, client):
+        # Arrange
+        pixelpotion.fail_status("sending", "Telegram failed — kept in pending for retry")
+
+        # Act
+        parsed = audit(client, "/")
+        (tracker,) = parsed.find("ol", id="tracker")
+        steps = [a["data-step"] for t, a in parsed.tags if t == "li" and "data-step" in a]
+
+        # Assert
+        assert tracker["data-step"] == "failed"
+        assert tracker["data-failed-step"] == "sending"
+        assert steps == ["capturing", "brewing", "sending", "done"]
+
+    def test_tracker_names_only_steps_the_pipeline_reports(self, client):
+        # Act
+        parsed = audit(client, "/")
+        steps = {a["data-step"] for t, a in parsed.tags if t == "li" and "data-step" in a}
+
+        # Assert
+        assert steps <= set(pixelpotion.PIPELINE_STEPS)
+
+    def test_wifi_chip_can_be_updated_in_place(self, client, monkeypatch):
+        # Arrange
+        monkeypatch.setattr(pixelpotion, "is_wifi_connected", lambda: False)
+
+        # Act
+        body = client.get("/").get_data(as_text=True)
+
+        # Assert
+        assert re.search(r'id="wifiChip".*?class="chip-text">WiFi: AP Mode<', body, re.S)
+
+    @pytest.mark.parametrize("page", PAGES)
+    def test_connection_banner_is_hidden_until_polling_fails(self, client, page):
+        # Act
+        (banner,) = audit(client, page).find("div", id="connectionBanner")
+
+        # Assert
+        assert "hidden" in banner
+        assert banner["aria-live"] == "polite"
+
+    def test_polling_pauses_in_background_and_backs_off_on_errors(self):
+        # Arrange
+        source = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        poller = re.search(r"function pollStatus\(.*?\n    \}", source, re.S).group(0)
+
+        # Act / Assert — timing itself is checked in a real browser.
+        assert "visibilitychange" in poller
+        assert "document.hidden" in poller
+        assert "MAX_BACKOFF_MS" in poller
+        assert "updatePendingBadge(data.pending_count)" in poller
+        assert "setInterval" not in source
+
+    def test_index_polls_fast_only_while_busy(self):
+        # Act
+        source = (STATIC_DIR / "index.js").read_text(encoding="utf-8")
+
+        # Assert
+        assert "isBusy(data) ? 2000 : 10000" in source
+        assert "setInterval" not in source
+
+    def test_gallery_refreshes_without_losing_a_selection(self, client, full_pages):
+        # Arrange
+        source = (STATIC_DIR / "gallery.js").read_text(encoding="utf-8")
+
+        # Act
+        (grid,) = audit(client, "/gallery").find("div", id="photoGrid")
+
+        # Assert
+        assert grid["data-count"] == "1"
+        assert "preview.open" in source and "b.checked" in source
+
+
+class TestVisualIdentity:
+    EMOJI = re.compile("[\U0001F300-\U0001FAFF☀-➿️]")
+
+    @pytest.mark.parametrize("path", sorted(
+        list((REPO_ROOT / "templates").glob("*.html")) + list(STATIC_DIR.glob("*.js")),
+        key=lambda p: p.name,
+    ), ids=lambda p: p.name)
+    def test_ui_chrome_uses_svg_icons_not_emoji(self, path):
+        # Act
+        found = self.EMOJI.findall(path.read_text(encoding="utf-8"))
+
+        # Assert
+        assert found == []
+
+    def test_typography_uses_only_system_font_stacks(self):
+        # Act
+        css = (STATIC_DIR / "app.css").read_text(encoding="utf-8")
+
+        # Assert — no web fonts: the access point has no internet.
+        assert "@font-face" not in css and "@import" not in css
+        assert "ui-serif" in css and "ui-monospace" in css
+
+    def test_capture_button_is_the_round_shutter(self, client):
+        # Act
+        body = client.get("/").get_data(as_text=True)
+
+        # Assert
+        assert re.search(r'class="capture-btn"[^>]*>\s*<span class="shutter-core"><svg', body)

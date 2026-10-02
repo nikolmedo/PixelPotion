@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+{% from "_icons.html" import icon %}
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -11,23 +12,26 @@
 <body data-page="{{ request.endpoint }}">
     <a class="skip-link" href="#main">Skip to content</a>
     <header class="header">
-        <h1>🧪 PixelPotion</h1>
-        <p>{% block subtitle %}AI Style Camera{% endblock %}</p>
+        <a class="brand" href="/">{{ icon("flask", 28) }}<span>PixelPotion</span></a>
+        <p class="tagline">{% block subtitle %}Photos, restyled by AI, delivered to Telegram{% endblock %}</p>
     </header>
 
     {% set nav_items = [
-        ("index", "/", "📷 Capture"),
-        ("styles_page", "/styles", "🎨 Styles"),
-        ("gallery", "/gallery", "🖼️ Gallery"),
+        ("index", "/", "camera", "Camera"),
+        ("styles_page", "/styles", "palette", "Styles"),
+        ("gallery", "/gallery", "images", "Gallery"),
     ] %}
     <nav class="nav" aria-label="Main">
-        {% for endpoint, href, label in nav_items %}
-        <a href="{{ href }}"{% if request.endpoint == endpoint %} class="active" aria-current="page"{% endif %}>
-            {{ label }}
+        {% for endpoint, href, icon_name, label in nav_items %}
+        <a href="{{ href }}"{% if request.endpoint == endpoint %} aria-current="page"{% endif %}>
+            {{ icon(icon_name) }}<span>{{ label }}</span>
             {% if endpoint == "gallery" %}<span class="pending-badge" id="pendingBadge"{% if not pending_count %} hidden{% endif %}>{{ pending_count }}</span>{% endif %}
         </a>
         {% endfor %}
     </nav>
+    <div class="connection-banner" id="connectionBanner" role="status" aria-live="polite" hidden>
+        Connection lost — retrying…
+    </div>
 
     <main class="container" id="main" tabindex="-1">
         <div class="flash-region" id="flashRegion" role="status" aria-live="polite">

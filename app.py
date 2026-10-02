@@ -538,7 +538,14 @@ def redact(message: str, *secrets_to_hide: str) -> str:
 # path and the worker thread. It stays one module-level dict mutated in place;
 # every access goes through status_lock via the helpers below.
 status_lock = threading.Lock()
-status = {"last_action": "Waiting...", "processing": False, "capturing": False}
+status = {"last_action": "Waiting...", "processing": False, "capturing": False,
+          "step": "idle", "failed_step": ""}
+
+# `step` drives the portal's progress tracker. It names the latest pipeline
+# event, so a capture made while another photo is processing moves it too.
+# `failed_step` says which step a "failed" belongs to.
+PIPELINE_STEPS = ("idle", "capturing", "queued", "brewing", "sending",
+                  "done", "failed", "waiting_wifi")
 
 # Processing runs on ONE long-lived worker thread fed by this queue, so a
 # capture never waits for (or is dropped by) a photo that is being processed.
@@ -549,8 +556,14 @@ _worker_thread: threading.Thread | None = None
 
 
 def update_status(**fields):
+    if fields.get("step", "failed") != "failed":
+        fields.setdefault("failed_step", "")
     with status_lock:
         status.update(fields)
+
+
+def fail_status(failed_step, last_action):
+    update_status(step="failed", failed_step=failed_step, last_action=last_action)
 
 
 def status_snapshot() -> dict:
@@ -681,15 +694,15 @@ def capture_to_pending(style_id=None) -> str | None:
     Only the camera lock is held, so capturing works while another photo is
     being processed. Returns the pending file name, or None on failure.
     """
-    update_status(capturing=True, last_action="Capturing pixels...")
+    update_status(capturing=True, step="capturing", last_action="Capturing pixels...")
     try:
         photo_path = capture_photo()
         if not photo_path:
-            update_status(last_action="Error: could not capture photo")
+            fail_status("capturing", "Error: could not capture photo")
             return None
         # A photo that is not durably pending must not go any further.
         if not ensure_in_pending(photo_path):
-            update_status(last_action="Error: could not save photo")
+            fail_status("capturing", "Error: could not save photo")
             return None
         name = Path(photo_path).name
         try:
@@ -698,7 +711,7 @@ def capture_to_pending(style_id=None) -> str | None:
             # The photo itself is safe; a retry falls back to the active style.
             log.error("Could not record the style of %s: %s", name, e)
         enqueue_pending(name)
-        update_status(last_action=f"Captured {name} — queued for processing")
+        update_status(step="queued", last_action=f"Captured {name} — queued for processing")
         return name
     finally:
         update_status(capturing=False)
@@ -744,7 +757,7 @@ def process_pending_photo(filename) -> bool:
     update_status(processing=True)
     try:
         if not is_wifi_connected():
-            update_status(last_action=f"No WiFi — kept in pending: {name}")
+            update_status(step="waiting_wifi", last_action=f"No WiFi — kept in pending: {name}")
             return True
         state = update_photo_state(pending_path, attempts=state["attempts"] + 1)
         if state is None:
@@ -752,38 +765,40 @@ def process_pending_photo(filename) -> bool:
 
         processed = state["processed_path"]
         if not state["telegram_styled_sent"] and not (processed and Path(processed).is_file()):
-            update_status(last_action=f"Adding potion ({style_name})...")
+            update_status(step="brewing", last_action=f"Adding potion ({style_name})...")
             result = process_with_ai(str(pending_path), prompt)
             if not result.ok:
                 if result.permanent:
                     # Retrying cannot help: auto-retry skips it from now on.
                     update_photo_state(pending_path, failed=True, failed_reason=result.reason)
-                    update_status(last_action=f"Failed: {result.reason} — "
-                                              "kept in pending, retry it from the gallery")
+                    fail_status("brewing", f"Failed: {result.reason} — "
+                                           "kept in pending, retry it from the gallery")
                 else:
-                    update_status(last_action="AI processing failed — kept in pending for retry")
+                    fail_status("brewing", "AI processing failed — kept in pending for retry")
                 return True
             processed = result.path
             if update_photo_state(pending_path, processed_path=processed) is None:
                 return False  # deleted from the gallery during the AI call
 
-        update_status(last_action="Sending via Telegram...")
+        update_status(step="sending", last_action="Sending via Telegram...")
         if not state["telegram_original_sent"]:
             if not send_telegram_photo(str(pending_path), ORIGINAL_CAPTION):
-                update_status(last_action="Telegram failed — kept in pending for retry")
+                fail_status("sending", "Telegram failed — kept in pending for retry")
                 return True
             update_photo_state(pending_path, telegram_original_sent=True)
         if not state["telegram_styled_sent"]:
             if not send_telegram_photo(processed, styled_caption(style_name)):
-                update_status(last_action="Telegram failed — kept in pending for retry")
+                fail_status("sending", "Telegram failed — kept in pending for retry")
                 return True
             update_photo_state(pending_path, telegram_styled_sent=True)
 
         remove_from_pending(pending_path)
-        update_status(last_action=f"✅ Done ({style_name}): {name}")
+        update_status(step="done", last_action=f"✅ Done ({style_name}): {name}")
         return True
     except Exception as e:
-        update_status(last_action=f"Error: {e} — kept in pending")
+        current = status_snapshot()["step"]
+        fail_status(current if current in ("brewing", "sending") else "brewing",
+                    f"Error: {e} — kept in pending")
         log.error("Pipeline error for %s: %s", name, e)
         return True
     finally:
