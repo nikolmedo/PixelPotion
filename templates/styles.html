@@ -144,7 +144,7 @@
                             <button class="btn btn-primary btn-sm" onclick="setActive('{{ style.id }}')">⭐ Activate</button>
                             {% endif %}
                             <form method="post" action="/delete_style/{{ style.id }}" style="display:inline;"
-                                  onsubmit="return confirm('Delete style \'{{ style.name }}\'?')">
+                                  class="delete-style-form" data-style-name="{{ style.name }}">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                 <button type="submit" class="btn btn-danger btn-sm">🗑️ Delete</button>
                             </form>
@@ -219,6 +219,14 @@
         }
 
         const CSRF_TOKEN = {{ csrf_token()|tojson }};
+
+        // Style names are user input: read them from data attributes, never
+        // interpolate them into inline JS.
+        document.querySelectorAll('.delete-style-form').forEach(form => {
+            form.addEventListener('submit', e => {
+                if (!confirm(`Delete style '${form.dataset.styleName}'?`)) e.preventDefault();
+            });
+        });
 
         function setActive(id) {
             fetch('/set_active_style', {

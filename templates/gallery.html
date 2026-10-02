@@ -110,54 +110,53 @@
         </div>
         {% endif %}
 
+        <!-- The bulk form holds only the toolbar; checkboxes join it via form="bulkForm"
+             so per-photo delete forms are never nested inside it. -->
         <form method="post" action="/delete_selected" id="bulkForm">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="toolbar">
-                <button type="button" class="btn btn-outline" onclick="toggleSelectAll()">☑️ All</button>
-                <button type="submit" class="btn btn-danger" onclick="return confirm('Delete selected photos?')">🗑️ Delete</button>
+                <button type="button" class="btn btn-outline" id="selectAllBtn">☑️ All</button>
+                <button type="submit" class="btn btn-danger">🗑️ Delete</button>
                 {% if wifi_connected %}
-                <button type="button" class="btn btn-success" onclick="processAll()">🎨 Process all</button>
+                <button type="button" class="btn btn-success" id="processAllBtn">🎨 Process all</button>
                 {% endif %}
             </div>
+        </form>
 
-            <div class="photo-grid">
-                {% for photo in photos %}
-                <div class="photo-card" id="card-{{ loop.index }}">
-                    <img class="photo-img" src="/pending_photo/{{ photo.name }}" alt="{{ photo.name }}"
-                         loading="lazy" onclick="openModal('/pending_photo/{{ photo.name }}')">
-                    <div class="photo-info">
-                        <div style="display:flex;align-items:center;gap:10px;">
-                            <label class="checkbox-label">
-                                <input type="checkbox" name="selected_photos" value="{{ photo.name }}"
-                                       onchange="toggleCard('card-{{ loop.index }}',this.checked)">
-                            </label>
-                            <div class="photo-meta">
-                                <span class="name">{{ photo.name }}</span>
-                                {{ photo.date }} · {{ photo.size_kb }} KB
-                            </div>
-                        </div>
-                        <div class="photo-actions">
-                            {% if wifi_connected %}
-                            <button type="button" class="btn btn-success" style="padding:6px 10px;font-size:.8em;"
-                                    onclick="processOne('{{ photo.name }}')">🎨</button>
-                            {% endif %}
-                            <form method="post" action="/delete_photo" style="display:inline;">
-                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                <input type="hidden" name="filename" value="{{ photo.name }}">
-                                <button type="submit" class="btn btn-danger" style="padding:6px 10px;font-size:.8em;"
-                                        onclick="return confirm('Delete this photo?')">🗑️</button>
-                            </form>
+        <div class="photo-grid">
+            {% for photo in photos %}
+            <div class="photo-card">
+                <img class="photo-img" src="{{ url_for('serve_pending_photo', filename=photo.name) }}" alt="{{ photo.name }}" loading="lazy">
+                <div class="photo-info">
+                    <div style="display:flex;align-items:center;gap:10px;">
+                        <label class="checkbox-label">
+                            <input type="checkbox" name="selected_photos" value="{{ photo.name }}" form="bulkForm">
+                        </label>
+                        <div class="photo-meta">
+                            <span class="name">{{ photo.name }}</span>
+                            {{ photo.date }} · {{ photo.size_kb }} KB
                         </div>
                     </div>
+                    <div class="photo-actions">
+                        {% if wifi_connected %}
+                        <button type="button" class="btn btn-success process-one" style="padding:6px 10px;font-size:.8em;"
+                                data-filename="{{ photo.name }}">🎨</button>
+                        {% endif %}
+                        <form method="post" action="/delete_photo" class="delete-photo-form" style="display:inline;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="filename" value="{{ photo.name }}">
+                            <button type="submit" class="btn btn-danger" style="padding:6px 10px;font-size:.8em;">🗑️</button>
+                        </form>
+                    </div>
                 </div>
-                {% endfor %}
             </div>
-        </form>
+            {% endfor %}
+        </div>
         {% endif %}
     </div>
 
-    <div class="modal-overlay" id="modal" onclick="closeModal()">
-        <button class="modal-close" onclick="closeModal()">✕</button>
+    <div class="modal-overlay" id="modal">
+        <button class="modal-close" type="button">✕</button>
         <img id="modalImg" src="" alt="Preview">
     </div>
 
@@ -213,17 +212,50 @@
         function closeModal() {
             document.getElementById('modal').classList.remove('active');
         }
-        function toggleCard(id, selected) {
-            document.getElementById(id).classList.toggle('selected', selected);
+        function photoBoxes() {
+            return document.querySelectorAll('input[name="selected_photos"]');
+        }
+        function syncCard(box) {
+            box.closest('.photo-card').classList.toggle('selected', box.checked);
         }
         function toggleSelectAll() {
-            const boxes = document.querySelectorAll('input[name="selected_photos"]');
-            const allChecked = Array.from(boxes).every(b => b.checked);
-            boxes.forEach((b, i) => {
+            const boxes = Array.from(photoBoxes());
+            const allChecked = boxes.every(b => b.checked);
+            boxes.forEach(b => {
                 b.checked = !allChecked;
-                toggleCard(`card-${i+1}`, !allChecked);
+                syncCard(b);
             });
         }
+
+        // Wire handlers from data attributes; file names are never interpolated into JS.
+        photoBoxes().forEach(box => box.addEventListener('change', () => syncCard(box)));
+        document.querySelectorAll('.photo-img').forEach(img => {
+            img.addEventListener('click', () => openModal(img.src));
+        });
+        document.querySelectorAll('.process-one').forEach(btn => {
+            btn.addEventListener('click', () => processOne(btn.dataset.filename));
+        });
+        document.querySelectorAll('.delete-photo-form').forEach(form => {
+            form.addEventListener('submit', e => {
+                if (!confirm('Delete this photo?')) e.preventDefault();
+            });
+        });
+        const bulkForm = document.getElementById('bulkForm');
+        if (bulkForm) {
+            bulkForm.addEventListener('submit', e => {
+                const selected = Array.from(photoBoxes()).filter(b => b.checked).length;
+                if (!selected) {
+                    e.preventDefault();
+                    alert('Select at least one photo to delete.');
+                } else if (!confirm(`Delete ${selected} selected photo(s)?`)) {
+                    e.preventDefault();
+                }
+            });
+            document.getElementById('selectAllBtn').addEventListener('click', toggleSelectAll);
+            const processAllBtn = document.getElementById('processAllBtn');
+            if (processAllBtn) processAllBtn.addEventListener('click', processAll);
+        }
+        document.getElementById('modal').addEventListener('click', closeModal);
         document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
     </script>
 </body>

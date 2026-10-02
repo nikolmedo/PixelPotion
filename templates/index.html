@@ -132,7 +132,7 @@
             <div class="style-selector" id="stylePills">
                 {% for style in styles %}
                 <div class="style-pill {{ 'active' if style.id == active_style_id else '' }}"
-                     data-id="{{ style.id }}" onclick="selectStyle('{{ style.id }}')">
+                     data-id="{{ style.id }}">
                     {{ style.name }}
                 </div>
                 {% endfor %}
@@ -221,7 +221,7 @@
 
     <script>
         const CSRF_TOKEN = {{ csrf_token()|tojson }};
-        let selectedStyle = '{{ active_style_id }}';
+        let selectedStyle = {{ active_style_id|tojson }};
         let isProcessing = {{ 'true' if status.processing else 'false' }};
 
         function selectStyle(id) {
@@ -236,6 +236,10 @@
                 body: JSON.stringify({style_id: id})
             });
         }
+
+        document.querySelectorAll('.style-pill').forEach(pill => {
+            pill.addEventListener('click', () => selectStyle(pill.dataset.id));
+        });
 
         function doCapture() {
             if (isProcessing) return;
@@ -279,20 +283,36 @@
             inp.type = inp.type === 'password' ? 'text' : 'password';
         }
 
+        // SSIDs are broadcast by anyone nearby: only ever insert them as text.
+        function showWifiMessage(list, text, color) {
+            const item = document.createElement('div');
+            item.className = 'wifi-item';
+            item.style.color = color;
+            item.textContent = text;
+            list.replaceChildren(item);
+        }
+
         function scanWifi() {
             const list = document.getElementById('wifiList');
             list.style.display = 'block';
-            list.innerHTML = '<div class="wifi-item" style="color:var(--text-dim)">Scanning...</div>';
+            showWifiMessage(list, 'Scanning...', 'var(--text-dim)');
             fetch('/scan_wifi').then(r => r.json()).then(networks => {
                 if (!networks.length) {
-                    list.innerHTML = '<div class="wifi-item" style="color:var(--text-dim)">No networks found</div>';
+                    showWifiMessage(list, 'No networks found', 'var(--text-dim)');
                     return;
                 }
-                list.innerHTML = networks.map(n =>
-                    `<div class="wifi-item" onclick="document.getElementById('wifiSsid').value='${n}'">${n}</div>`
-                ).join('');
+                const items = networks.map(ssid => {
+                    const item = document.createElement('div');
+                    item.className = 'wifi-item';
+                    item.textContent = ssid;
+                    item.addEventListener('click', () => {
+                        document.getElementById('wifiSsid').value = ssid;
+                    });
+                    return item;
+                });
+                list.replaceChildren(...items);
             }).catch(() => {
-                list.innerHTML = '<div class="wifi-item" style="color:var(--red)">Scan failed</div>';
+                showWifiMessage(list, 'Scan failed', 'var(--red)');
             });
         }
 
