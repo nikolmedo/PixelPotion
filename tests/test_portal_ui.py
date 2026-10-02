@@ -405,17 +405,21 @@ def contrast_ratio(foreground: str, background: str) -> float:
 
 # Every text colour paired with each background it is drawn on.
 TEXT_PAIRS = [
-    ("paper", "ink"), ("paper", "ink-raised"), ("paper", "ink-well"),
-    ("paper-dim", "ink"), ("paper-dim", "ink-raised"), ("paper-dim", "ink-well"),
-    ("safelight-text", "ink"), ("safelight-text", "ink-raised"),
-    ("on-paper", "paper"), ("on-safelight", "safelight"),
-    ("on-verdigris", "verdigris"), ("on-amber", "amber"),
+    ("ink", "butter"), ("ink", "butter-soft"), ("ink", "paper"),
+    ("ink-soft", "butter"), ("ink-soft", "paper"), ("ink-soft", "butter-soft"),
+    ("ink", "bubblegum"), ("ink", "potion"), ("ink", "sky"),
+    ("butter", "ink"), ("paper", "tomato-deep"), ("tomato-deep", "paper"),
+    ("tomato-deep", "butter"),
 ]
-# Borders and markers that identify controls or states need 3:1.
+# Outlines, focus rings and state markers need 3:1. Fills such as the
+# potion or bubblegum stickers always sit inside an ink outline, so the
+# outline is what has to stand out from the page and the card.
 UI_PAIRS = [
-    ("line-strong", "ink-raised"), ("paper-dim", "ink"),
-    ("verdigris", "ink-raised"), ("amber", "ink-raised"), ("focus", "ink"),
+    ("ink", "butter"), ("ink", "paper"), ("focus", "butter"), ("focus", "paper"),
+    ("tomato", "paper"), ("tomato-deep", "paper"),
 ]
+# Colours that must never carry text: they fail 4.5:1 against every surface.
+NEVER_TEXT = ["tomato", "potion-deep"]
 
 
 class TestColourContrast:
@@ -441,12 +445,40 @@ class TestColourContrast:
         # Assert
         assert ratio >= 3.0, f"--{foreground} on --{background}: {ratio:.2f}"
 
-    def test_reduced_motion_is_respected(self):
+    @pytest.mark.parametrize("token", NEVER_TEXT)
+    def test_low_contrast_colours_are_too_weak_for_text(self, token):
+        # Arrange — guards the comment in app.css: if these ever pass 4.5:1
+        # the palette changed and the pairs above need a fresh look.
+        tokens = css_tokens()
+
         # Act
-        css = (STATIC_DIR / "app.css").read_text(encoding="utf-8")
+        best = max(contrast_ratio(tokens[token], tokens[bg])
+                   for bg in ("butter", "paper", "ink"))
 
         # Assert
-        assert "@media (prefers-reduced-motion: reduce)" in css
+        assert best < 4.5
+
+    def test_reduced_motion_stops_animations_and_transitions(self):
+        # Arrange
+        css = (STATIC_DIR / "app.css").read_text(encoding="utf-8")
+
+        # Act
+        block = css[css.index("@media (prefers-reduced-motion: reduce)"):]
+
+        # Assert — loops (bubbles, slosh) and transforms in motion all stop.
+        assert "animation: none !important" in block
+        assert "transition: none !important" in block
+
+    def test_motion_uses_the_shared_tokens(self):
+        # Arrange
+        css = (STATIC_DIR / "app.css").read_text(encoding="utf-8")
+
+        # Act
+        root = re.search(r":root\s*\{(.*?)\}", css, re.S).group(1)
+
+        # Assert
+        for token in ("--ease-pop", "--ease-ui", "--dur-1", "--dur-2", "--dur-3"):
+            assert token in root, token
 
     def test_contrast_maths_matches_the_wcag_reference(self):
         # Act / Assert — black on white is the 21:1 maximum.
@@ -531,7 +563,8 @@ class TestVisualIdentity:
     EMOJI = re.compile("[\U0001F300-\U0001FAFF☀-➿️]")
 
     @pytest.mark.parametrize("path", sorted(
-        list((REPO_ROOT / "templates").glob("*.html")) + list(STATIC_DIR.glob("*.js")),
+        list((REPO_ROOT / "templates").glob("*.html")) + list(STATIC_DIR.glob("*.js"))
+        + list(STATIC_DIR.glob("*.css")),
         key=lambda p: p.name,
     ), ids=lambda p: p.name)
     def test_ui_chrome_uses_svg_icons_not_emoji(self, path):
@@ -547,7 +580,7 @@ class TestVisualIdentity:
 
         # Assert — no web fonts: the access point has no internet.
         assert "@font-face" not in css and "@import" not in css
-        assert "ui-serif" in css and "ui-monospace" in css
+        assert "ui-rounded" in css and "system-ui" in css
 
     def test_capture_button_is_the_round_shutter(self, client):
         # Act
