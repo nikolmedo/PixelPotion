@@ -159,7 +159,8 @@ def isolated_state(tmp_path, monkeypatch):
     pixelpotion.config.update(copy.deepcopy(BASELINE_CONFIG))
     pixelpotion.status.clear()
     pixelpotion.status.update(
-        {"last_action": "Waiting...", "processing": False, "capturing": False}
+        {"last_action": "Waiting...", "processing": False, "capturing": False,
+         "step": "idle", "failed_step": ""}
     )
     # The processing queue and its de-duplication set are module-level too.
     while True:

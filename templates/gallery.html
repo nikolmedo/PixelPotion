@@ -1,28 +1,30 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% block title %}Gallery{% endblock %}
-{% block subtitle %}Pending Photos Gallery{% endblock %}
+{% block subtitle %}Photos waiting to be restyled and sent{% endblock %}
 
 {% block content %}
         {% if not wifi_connected %}
-        <div class="wifi-warning">
-            ⚠️ No WiFi. You can preview and delete photos, but not process them.
-            <a href="/">Configure WiFi →</a>
+        <div class="notice notice-warning">
+            <p>{{ icon("wifi-off") }} <strong>No WiFi.</strong> You can preview and delete photos here;
+               they are restyled and sent once the camera is online.
+               <a href="/#wifi">Set up WiFi</a></p>
         </div>
         {% endif %}
 
         {% if photos|length == 0 %}
         <div class="empty-state">
-            <div class="icon">📭</div>
-            <p>No pending photos</p>
-            <p style="font-size:.85em;margin-top:8px;">Photos captured without WiFi will appear here</p>
+            {{ icon("images", 40) }}
+            <p>Nothing waiting.</p>
+            <p class="hint">Photos that couldn't be sent yet, for example while offline, show up here.</p>
         </div>
         {% else %}
 
         <!-- Style selector for processing -->
         {% if wifi_connected and styles|length > 0 %}
         <div class="card">
-            <div class="form-group" style="margin-bottom:0;">
-                <label>Style to apply</label>
+            <div class="form-group form-group-last">
+                <label for="galleryStyle">Style to apply</label>
                 <select id="galleryStyle">
                     {% for style in styles %}
                     <option value="{{ style.id }}" {{ 'selected' if style.id == active_style_id else '' }}>
@@ -39,40 +41,43 @@
         <form method="post" action="/delete_selected" id="bulkForm">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="toolbar">
-                <button type="button" class="btn btn-outline" id="selectAllBtn">☑️ All</button>
-                <button type="submit" class="btn btn-danger">🗑️ Delete</button>
+                <button type="button" class="btn btn-outline" id="selectAllBtn">{{ icon("select-all") }} Select all</button>
+                <button type="submit" class="btn btn-danger">{{ icon("trash") }} Delete selected</button>
                 {% if wifi_connected %}
-                <button type="button" class="btn btn-success" id="processAllBtn">🎨 Process all</button>
+                <button type="button" class="btn btn-success" id="processAllBtn">{{ icon("send") }} Process all</button>
                 {% endif %}
             </div>
         </form>
 
-        <div class="photo-grid">
+        <div class="photo-grid" id="photoGrid" data-count="{{ photos|length }}">
             {% for photo in photos %}
             <div class="photo-card">
-                <img class="photo-img" src="{{ url_for('serve_pending_photo', filename=photo.name) }}" alt="{{ photo.name }}" loading="lazy">
+                <button type="button" class="photo-open" aria-label="Preview {{ photo.name }}">
+                    <img class="photo-img" src="{{ url_for('serve_pending_photo', filename=photo.name) }}" alt="" loading="lazy">
+                </button>
                 <div class="photo-info">
-                    <div style="display:flex;align-items:center;gap:10px;">
-                        <label class="checkbox-label">
-                            <input type="checkbox" name="selected_photos" value="{{ photo.name }}" form="bulkForm">
-                        </label>
-                        <div class="photo-meta">
-                            <span class="name">{{ photo.name }}</span>
-                            {{ photo.date }} · {{ photo.size_kb }} KB
-                            {% if photo.failed_reason %}
-                            <span class="failed-badge">Failed: {{ photo.failed_reason }}</span>
-                            {% endif %}
-                        </div>
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="selected_photos" value="{{ photo.name }}" form="bulkForm"
+                               aria-label="Select {{ photo.name }}">
+                    </label>
+                    <div class="photo-meta">
+                        <span class="name">{{ photo.name }}</span>
+                        <span class="meta">{{ photo.date }}, {{ photo.size_kb }} KB</span>
+                        {% if photo.failed_reason %}
+                        <span class="state-tag state-failed">Failed: {{ photo.failed_reason }}</span>
+                        {% else %}
+                        <span class="state-tag state-waiting">Not sent yet</span>
+                        {% endif %}
                     </div>
                     <div class="photo-actions">
                         {% if wifi_connected %}
-                        <button type="button" class="btn btn-success process-one" style="padding:6px 10px;font-size:.8em;"
-                                data-filename="{{ photo.name }}">🎨</button>
+                        <button type="button" class="btn btn-success btn-icon process-one"
+                                data-filename="{{ photo.name }}" aria-label="Process {{ photo.name }}">{{ icon("send") }}</button>
                         {% endif %}
-                        <form method="post" action="/delete_photo" class="delete-photo-form" style="display:inline;">
+                        <form method="post" action="/delete_photo" class="inline-form delete-photo-form">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <input type="hidden" name="filename" value="{{ photo.name }}">
-                            <button type="submit" class="btn btn-danger" style="padding:6px 10px;font-size:.8em;">🗑️</button>
+                            <button type="submit" class="btn btn-danger btn-icon" aria-label="Delete {{ photo.name }}">{{ icon("trash") }}</button>
                         </form>
                     </div>
                 </div>
@@ -81,10 +86,10 @@
         </div>
         {% endif %}
 
-        <div class="modal-overlay" id="modal">
-            <button class="modal-close" type="button">✕</button>
-            <img id="modalImg" alt="Preview">
-        </div>
+        <dialog class="preview-dialog" id="preview" aria-label="Photo preview">
+            <button type="button" class="preview-close" id="previewClose" aria-label="Close preview">{{ icon("cross", 24) }}</button>
+            <img id="previewImg" alt="">
+        </dialog>
 {% endblock %}
 
 {% block scripts %}

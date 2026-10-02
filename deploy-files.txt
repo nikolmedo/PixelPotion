@@ -9,6 +9,7 @@ default_config.json
 requirements.txt
 VERSION
 update.sh
+templates/_icons.html
 templates/base.html
 templates/index.html
 templates/styles.html
