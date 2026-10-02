@@ -2,12 +2,15 @@
 
 import json
 import re
+from html.parser import HTMLParser
 from unittest.mock import MagicMock
 
 import pytest
 
 import app as pixelpotion
-from conftest import BASELINE_CONFIG, make_jpeg_bytes
+from conftest import (
+    BASELINE_CONFIG, CSRF_TEST_TOKEN, make_jpeg_bytes, seed_csrf_session,
+)
 
 IWLIST_SCAN_OUTPUT = """\
 wlan0     Scan completed :
@@ -481,3 +484,189 @@ class TestScanWifi:
 
         # Act / Assert
         assert client.get("/scan_wifi").get_json() == []
+
+
+class FormCsrfAudit(HTMLParser):
+    """Collect every <form> and whether it carries a csrf_token field."""
+
+    def __init__(self):
+        super().__init__()
+        self.forms = []  # [action, has_token]
+        self._open = None
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == "form":
+            self._open = [attrs.get("action"), False]
+            self.forms.append(self._open)
+        elif tag == "input" and self._open and attrs.get("name") == "csrf_token":
+            self._open[1] = bool(attrs.get("value"))
+
+    def handle_endtag(self, tag):
+        if tag == "form":
+            self._open = None
+
+
+class TestCsrfProtection:
+    def test_form_post_without_token_is_rejected_and_config_unchanged(
+        self, plain_client, isolated_state
+    ):
+        # Arrange — a valid session exists, but the forged form carries no token.
+        seed_csrf_session(plain_client)
+
+        # Act
+        response = plain_client.post("/save_config", data={
+            "gemini_api_key": "AIzaSyAttackerControlledKey00000000000",
+            "telegram_chat_id": "666000666",
+        })
+
+        # Assert
+        assert response.status_code == 302
+        assert response.headers["Location"].endswith("/")
+        assert pixelpotion.config["telegram_chat_id"] == "492817365"
+        assert pixelpotion.config["gemini_api_key"] == BASELINE_CONFIG["gemini_api_key"]
+        assert not isolated_state.config_path.exists()
+        assert ("error", "Your session expired — please try again.") in (
+            get_flashes(plain_client)
+        )
+
+    def test_post_without_any_session_is_rejected(self, plain_client, isolated_state):
+        # Arrange — e.g. the service restarted and the old session is gone.
+        target = isolated_state.pending / "photo_20260609_201500.jpg"
+        target.write_bytes(make_jpeg_bytes())
+
+        # Act
+        plain_client.post("/delete_photo", data={
+            "filename": target.name, "csrf_token": CSRF_TEST_TOKEN,
+        })
+
+        # Assert
+        assert target.exists()
+
+    def test_wrong_token_is_rejected_and_file_survives(self, client, isolated_state):
+        # Arrange
+        target = isolated_state.pending / "photo_20260609_201500.jpg"
+        target.write_bytes(make_jpeg_bytes())
+
+        # Act
+        client.post(
+            "/delete_photo",
+            data={"filename": target.name},
+            headers={"X-CSRF-Token": "forged-token-from-another-site"},
+        )
+
+        # Assert
+        assert target.exists()
+
+    def test_rejection_redirects_back_to_same_origin_referrer(self, plain_client):
+        # Arrange
+        seed_csrf_session(plain_client)
+
+        # Act
+        response = plain_client.post(
+            "/add_style",
+            data={"style_name": "Cyberpunk Neon", "style_prompt": "TASK: neon city"},
+            headers={"Referer": "http://localhost/styles"},
+        )
+
+        # Assert
+        assert response.headers["Location"] == "/styles"
+        assert [s["name"] for s in pixelpotion.config["styles"]] == [
+            "Pixar 3D", "Anime / Manga", "Watercolor",
+        ]
+
+    def test_rejection_ignores_foreign_referrer(self, plain_client):
+        # Arrange
+        seed_csrf_session(plain_client)
+
+        # Act
+        response = plain_client.post(
+            "/delete_style/pixar",
+            headers={"Referer": "http://evil.example.com/styles"},
+        )
+
+        # Assert
+        assert response.headers["Location"] == "/"
+        assert "pixar" in [s["id"] for s in pixelpotion.config["styles"]]
+
+    def test_form_field_token_is_accepted(self, plain_client):
+        # Arrange
+        seed_csrf_session(plain_client)
+
+        # Act
+        plain_client.post("/save_config", data={
+            "telegram_chat_id": "581234902", "csrf_token": CSRF_TEST_TOKEN,
+        })
+
+        # Assert
+        assert pixelpotion.config["telegram_chat_id"] == "581234902"
+
+    def test_json_route_without_token_returns_400(self, plain_client):
+        # Arrange
+        seed_csrf_session(plain_client)
+
+        # Act
+        response = plain_client.post(
+            "/set_active_style", json={"style_id": "watercolor"}
+        )
+
+        # Assert
+        assert response.status_code == 400
+        assert response.get_json()["ok"] is False
+        assert pixelpotion.config["active_style_id"] == "pixar"
+
+    def test_capture_without_token_returns_400_json(self, plain_client, fake_thread):
+        # Arrange
+        seed_csrf_session(plain_client)
+
+        # Act
+        response = plain_client.post("/capture", data={"style_id": "anime"})
+
+        # Assert
+        assert response.status_code == 400
+        assert response.get_json()["ok"] is False
+        fake_thread.assert_not_called()
+
+    def test_json_route_accepts_header_token(self, plain_client):
+        # Arrange
+        seed_csrf_session(plain_client)
+
+        # Act
+        response = plain_client.post(
+            "/set_active_style",
+            json={"style_id": "watercolor"},
+            headers={"X-CSRF-Token": CSRF_TEST_TOKEN},
+        )
+
+        # Assert
+        assert response.status_code == 200
+        assert pixelpotion.config["active_style_id"] == "watercolor"
+
+    def test_rendered_token_matches_session_token(self, plain_client):
+        # Act
+        body = plain_client.get("/").get_data(as_text=True)
+
+        # Assert — the page mints a token and embeds the one stored in the session.
+        with plain_client.session_transaction() as session:
+            token = session["_csrf_token"]
+        assert f'name="csrf_token" value="{token}"' in body
+        assert f"const CSRF_TOKEN = {json.dumps(token)};" in body
+
+    @pytest.mark.parametrize("page", ["/", "/styles", "/gallery"])
+    def test_every_form_carries_a_csrf_token(
+        self, client, isolated_state, monkeypatch, page
+    ):
+        # Arrange — render every conditional block (pending photos, WiFi up).
+        monkeypatch.setattr(pixelpotion, "is_wifi_connected", lambda: True)
+        (isolated_state.pending / "photo_20260609_201500.jpg").write_bytes(
+            make_jpeg_bytes()
+        )
+        audit = FormCsrfAudit()
+
+        # Act
+        audit.feed(client.get(page).get_data(as_text=True))
+
+        # Assert
+        assert audit.forms, f"expected forms on {page}"
+        missing = [action for action, has_token in audit.forms if not has_token]
+        assert missing == []

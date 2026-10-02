@@ -6,19 +6,22 @@ Captures photos, transforms them with Gemini AI, and delivers them via Telegram.
 
 import os
 import sys
+import hmac
 import json
 import time
 import uuid
 import signal
 import logging
+import secrets
 import threading
 import subprocess
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
-    flash, jsonify, send_from_directory
+    flash, jsonify, send_from_directory, session
 )
 
 from constants import (
@@ -99,6 +102,56 @@ config = load_config()
 app = Flask(__name__, template_folder=str(BASE_DIR / "templates"),
             static_folder=str(BASE_DIR / "static"))
 app.secret_key = os.urandom(24)
+
+# ---------------------------------------------------------------------------
+# CSRF protection
+# ---------------------------------------------------------------------------
+CSRF_SESSION_KEY = "_csrf_token"
+CSRF_FORM_FIELD = "csrf_token"
+CSRF_HEADER = "X-CSRF-Token"
+# POST endpoints called via fetch() that expect a JSON reply.
+JSON_ENDPOINTS = {"capture_route", "set_active_style"}
+
+
+def csrf_token() -> str:
+    """Return this session's CSRF token, creating it on first use."""
+    token = session.get(CSRF_SESSION_KEY)
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session[CSRF_SESSION_KEY] = token
+    return token
+
+
+@app.context_processor
+def inject_csrf_token():
+    return {"csrf_token": csrf_token}
+
+
+def _csrf_failure_response():
+    if request.is_json or request.endpoint in JSON_ENDPOINTS:
+        return jsonify({"ok": False, "error": "Invalid or missing CSRF token."}), 400
+    flash("Your session expired — please try again.", "error")
+    target = url_for("index")
+    referrer = request.referrer
+    if referrer:
+        parsed = urlparse(referrer)
+        if parsed.netloc == request.host and parsed.path.startswith("/"):
+            target = parsed.path
+    return redirect(target)
+
+
+@app.before_request
+def verify_csrf_token():
+    if request.method != "POST":
+        return None
+    expected = session.get(CSRF_SESSION_KEY, "").encode()
+    submitted = (
+        request.form.get(CSRF_FORM_FIELD) or request.headers.get(CSRF_HEADER) or ""
+    ).encode()
+    if not expected or not hmac.compare_digest(expected, submitted):
+        log.warning("Rejected POST %s: CSRF token mismatch", request.path)
+        return _csrf_failure_response()
+    return None
 
 
 # ---------------------------------------------------------------------------
