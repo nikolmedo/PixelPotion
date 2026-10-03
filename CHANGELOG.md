@@ -6,6 +6,12 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- The portal has a new **Settings** tab. The Gemini key, Telegram, camera module and WiFi
+  forms moved there from the Camera page, which now keeps just the camera. The "Get started"
+  checklist still opens on the first page and links to each section of Settings.
+
 ## [3.2.0] - 2026-10-02
 
 ### Added

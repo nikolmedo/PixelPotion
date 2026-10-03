@@ -15,8 +15,10 @@ templates/base.html
 templates/index.html
 templates/styles.html
 templates/gallery.html
+templates/settings.html
 static/app.css
 static/app.js
 static/index.js
 static/styles.js
 static/gallery.js
+static/settings.js

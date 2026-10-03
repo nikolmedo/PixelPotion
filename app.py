@@ -901,14 +901,23 @@ def gpio_button_listener():
 @app.route("/")
 def index():
     pending_photos = sorted(PHOTOS_PENDING.glob("*.jpg"), reverse=True)
-    camera_modules = [{"id": k, "label": v["label"]} for k, v in CAMERA_PROFILES.items()]
     return render_template(
         "index.html", config=config, status=status_snapshot(),
         wifi_connected=is_wifi_connected(),
         pending_count=len(list(pending_photos)),
         styles=config.get("styles", []),
         active_style_id=config.get("active_style_id", ""),
+    )
+
+
+@app.route("/settings")
+def settings_page():
+    camera_modules = [{"id": k, "label": v["label"]} for k, v in CAMERA_PROFILES.items()]
+    return render_template(
+        "settings.html", config=config,
+        wifi_connected=is_wifi_connected(),
         camera_modules=camera_modules,
+        pending_count=len(list(PHOTOS_PENDING.glob("*.jpg"))),
     )
 
 
@@ -927,7 +936,7 @@ def save_config_route():
             config["camera_module"] = module
         save_config(config)
     flash("Configuration saved.", "success")
-    return redirect(url_for("index"))
+    return redirect(url_for("settings_page"))
 
 
 @app.route("/save_wifi", methods=["POST"])
@@ -936,14 +945,14 @@ def save_wifi_route():
     password = request.form.get("wifi_password", "").strip()
     if not ssid:
         flash("SSID cannot be empty.", "error")
-        return redirect(url_for("index"))
+        return redirect(url_for("settings_page"))
     # The stored password is never rendered, so blank means "keep it" — but only
     # for the same network. A new SSID with a blank password is an open network.
     if not password and ssid == config.get("wifi_ssid"):
         password = config.get("wifi_password", "")
     if not (is_valid_wifi_credential(ssid) and is_valid_wifi_credential(password)):
         flash("SSID and password cannot contain quotes or line breaks.", "error")
-        return redirect(url_for("index"))
+        return redirect(url_for("settings_page"))
     with config_lock:
         config["wifi_ssid"] = ssid
         config["wifi_password"] = password
@@ -959,7 +968,7 @@ def save_wifi_route():
             start_ap_mode()
 
     threading.Thread(target=async_connect, daemon=True).start()
-    return redirect(url_for("index"))
+    return redirect(url_for("settings_page"))
 
 
 @app.route("/capture", methods=["POST"])
